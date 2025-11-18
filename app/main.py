@@ -21,69 +21,79 @@ app.add_middleware(
 
 ai_agent = AcademicAIAgent()
 
-async def get_user_request(
-    message: Optional[str] = Form(None),
-    course_id: Optional[int] = Form(None),
-    action_type: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    body: Optional[str] = None
-):
-    """Dependency to handle both form data and JSON"""
-    if body:
-        # JSON request
-        data = json.loads(body)
-        return UserRequest(**data)
-    else:
-        # Form data request
-        file_content = None
-        if file:
-            content = await file.read()
-            file_content = content.decode('utf-8')
-        
-        return UserRequest(
-            message=message,
-            course_id=course_id,
-            action_type=action_type,
-            file=file_content
-        )
-
-
-
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Smart Academic Assistant API"}
-
-
 @app.post("/chat")
 async def chat(request: UserRequest):
     """Main chat endpoint - uses AI agent for intent analysis and execution"""
     try:
-
         print(request)
-        # Use AI agent to handle the entire request
         result = ai_agent.handle_user_request(
             user_prompt=request.message,
             context={"course_id": request.course_id}
         )
-
-        print(result)
         
-        if result["status"] == "success":
+        print(f"Chat Result: {result}")
+        print(f"Status: {result.get('status')}")
+        
+        # Handle incomplete requests
+        if result.get("status") == "incomplete":
             return {
-                "reply": f"✅ I've executed: {result['intent']}\n\nResult: {result['result']}",
+                "reply": result["message"],
+                "missing_parameters": result["missing_parameters"],
+                "memory": len(ai_agent.memory.get_history()),
                 "details": result
             }
-        else:
+        
+        elif result.get("status") == "success":
+            return {
+                "reply": f"✅ I've executed: {result['intent']}\n\nResult: {result['result']}",
+                "memory": len(ai_agent.memory.get_history()),
+                "details": result
+            }
+        
+        elif result.get("status") == "error":
             return {
                 "reply": f"❌ Sorry, I encountered an error: {result['error']}",
+                "memory": len(ai_agent.memory.get_history()),
+                "details": result
+            }
+        
+        else:
+            return {
+                "reply": "❓ Unknown response status",
                 "details": result
             }
         
     except Exception as e:
+        print(f"Exception in /chat: {str(e)}")
         return JSONResponse(
             status_code=500, 
-            content={"error": str(e)}
+            content={"error": str(e), "message": "An unexpected error occurred"}
         )
+
+@app.post("/clear-memory")
+async def clear_memory():
+    """Clear conversation history"""
+    ai_agent.clear_memory()
+    return {"status": "success", "message": "Conversation history cleared"}
+
+@app.get("/memory")
+async def get_memory():
+    """Get current conversation history"""
+    return {
+        "history": ai_agent.get_memory(),
+        "size": len(ai_agent.get_memory())
+    }
+
+@app.get("/tools")
+async def list_tools():
+    """Get list of available tools"""
+    try:
+        return ai_agent.list_tools()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Keep direct endpoints for specific use cases
 @app.post("/direct-action")
@@ -95,10 +105,6 @@ async def direct_action(action: str, params: Dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-app.include_router(mcp_router, prefix="/mcp")
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    

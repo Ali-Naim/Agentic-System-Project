@@ -1,12 +1,17 @@
-# app/ai_agent.py
 from openai import OpenAI
-import instructor
-from typing import List, Dict, Any
+from typing import Dict, Any
 import json
-import requests  # ✅ missing import
-from moodle_integration import MoodleIntegration
 import os
 from dotenv import load_dotenv
+
+from moodle_integration import MoodleIntegration
+from memory import ConversationMemory
+from mcp_integration import MCPClient
+from tools import (
+    QuizTools, GradingTools, AnnouncementTools,
+    PerformanceTools, StudyTools, ResourceTools
+)
+from models import QuizRequest, GradingRequest, AnnouncementRequest
 
 load_dotenv()
 
@@ -14,61 +19,112 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 class AcademicAIAgent:
     def __init__(self):
-        # ✅ no need to use instructor.patch unless you’re using structured outputs from Instructor library
         self.client = OpenAI(api_key=OPENAI_API_KEY)
         self.moodle = MoodleIntegration()
-        self.mcp_base_url = "http://localhost:8000/mcp"
+        self.mcp_client = MCPClient()
+        self.memory = ConversationMemory(max_turns=5)
+        self.tool_schemas = self._build_tool_schemas()
+        self.quiz_tools = QuizTools(self.client)
+        self.grading_tools = GradingTools(self.client)
+        self.announcement_tools = AnnouncementTools(self.client)
+        self.performance_tools = PerformanceTools(self.client)
+        self.study_tools = StudyTools(self.client)
+        self.resource_tools = ResourceTools(self.client)
+
+    def _build_tool_schemas(self) -> Dict[str, Dict]:
+        """Extract schemas from Pydantic models"""
+        return {
+            "generate_quiz": QuizRequest.model_json_schema(),
+            "grade_assignment": GradingRequest.model_json_schema(),
+            "post_announcement": AnnouncementRequest.model_json_schema(),
+        }
+
+    def _format_tools_for_prompt(self) -> str:
+        """Format tool schemas for prompts"""
+        formatted = ""
+        for tool_name, schema in self.tool_schemas.items():
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            
+            formatted += f"\n- {tool_name}:\n"
+            formatted += f"  Description: {schema.get('description', 'No description')}\n"
+            formatted += f"  Required: {', '.join(required)}\n"
+            formatted += f"  Parameters: {', '.join(properties.keys())}\n"
+        
+        return formatted
 
     def analyze_intent(self, user_prompt: str) -> Dict:
         """Analyze user intent and determine which tool to use"""
+        
+        tools_description = self._format_tools_for_prompt()
+        memory_context = self.memory.get_context()
+        
         prompt = f"""
         Analyze this user request and determine the appropriate action.
         
-        User Request: {user_prompt}
+        {memory_context}
         
-        Available Actions:
-        - generate_quiz: When user wants to create a quiz/test
-        - grade_assignment: When user wants to grade student work
-        - post_announcement: When user wants to post announcements
-        - analyze_performance: When user wants student performance analysis
-        - answer_question: When user asks general questions
-        - create_study_plan: When user wants study plans
-        - send_reminders: When user wants to send reminders
+        Current User Request: {user_prompt}
         
-        Return JSON:
+        Available Actions and their required parameters:
+        {tools_description}
+        
+        IMPORTANT RULES:
+        1. If a required parameter is NOT mentioned in the user request or recent history, add it to "missing_parameters"
+        2. ONLY include parameters in "parameters" if the user explicitly provided them
+        3. Do NOT make up values like "value", "default", "example", etc.
+        4. For missing parameters, leave them OUT of the parameters dict
+        5. Use context from previous messages to infer parameters when appropriate
+        
+        Return ONLY valid JSON (no markdown, no extra text):
         {{
             "intent": "tool_name",
-            "parameters": {{"param1": "value1", ...}},
+            "parameters": {{"param1": "actual_value"}},
+            "missing_parameters": ["param_name1", "param_name2"],
+            "clarification_question": "What course would you like the quiz for?",
             "confidence": 0.95
         }}
         """
-        print(prompt)
-
+        
         try:
             response = self.client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}]
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}]
             )
+            
+            return json.loads(response.choices[0].message.content)
 
         except Exception as e:
             print(f"❌ Error in analyze_intent: {str(e)}")
             return {"intent": "error", "parameters": {}, "confidence": 0.0}
-        
-        return json.loads(response.choices[0].message.content)
-    
+
     def handle_user_request(self, user_prompt: str, context: Dict = None) -> Dict:
         """Main entry point - analyzes intent and routes to appropriate tool"""
-        # Step 1: Analyze intent
         intent_analysis = self.analyze_intent(user_prompt)
-
+        
         print(f"Intent Analysis: {intent_analysis}")
-
-        # Step 2: Call appropriate tool via MCP
+        
+        if intent_analysis.get("missing_parameters"):
+            response = {
+                "status": "incomplete",
+                "intent": intent_analysis["intent"],
+                "missing_parameters": intent_analysis["missing_parameters"],
+                "clarification_question": intent_analysis.get("clarification_question"),
+                "message": f"I need more information to proceed. {intent_analysis.get('clarification_question', 'Please provide the missing parameters.')}"
+            }
+            
+            self.memory.add(user_prompt, response["message"])
+            return response
+        
         try:
             result = self.call_tool(
                 intent_analysis["intent"], 
                 intent_analysis["parameters"]
             )
+            
+            success_message = f"✅ Successfully executed {intent_analysis['intent']}"
+            self.memory.add(user_prompt, success_message)
+            
             return {
                 "status": "success",
                 "intent": intent_analysis["intent"],
@@ -76,269 +132,29 @@ class AcademicAIAgent:
                 "confidence": intent_analysis["confidence"]
             }
         except Exception as e:
+            error_message = f"❌ Error: {str(e)}"
+            self.memory.add(user_prompt, error_message)
+            
             return {
                 "status": "error",
                 "error": str(e),
                 "intent": intent_analysis["intent"]
             }
 
-
-
-
-
-    # ---------------------------------------------------------
-    # 📘 QUIZ GENERATION
-    # ---------------------------------------------------------
-    def generate_quiz(self, course_content: str, focus_area: str, difficulty: str = "medium", num_questions: int = 10) -> Dict:
-        prompt = f"""
-        Generate a {difficulty} level quiz with {num_questions} questions based on the following course content:
-        {course_content}
-        
-        Focus Area: {focus_area}
-
-        Include multiple choice questions with 4 options each.
-        Return as valid JSON in the following format:
-        {{
-            "questions": [
-                {{
-                    "question": "...",
-                    "options": ["A", "B", "C", "D"],
-                    "answer": "B"
-                }}
-            ]
-        }}
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",  # ✅ use faster model for structured tasks
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # fallback if model outputs text
-            return {"raw_output": content}
-
-    # ---------------------------------------------------------
-    # 📗 GRADE ASSIGNMENT
-    # ---------------------------------------------------------
-    def grade_assignment(self, assignment_content: str, rubric: Dict, student_answer: str) -> Dict:
-        prompt = f"""
-        Grade the following assignment based on this rubric.
-        Provide detailed feedback and a score (0-100).
-
-        Assignment: {assignment_content}
-        Rubric: {json.dumps(rubric, indent=2)}
-        Student Answer: {student_answer}
-
-        Return JSON:
-        {{
-            "score": <number>,
-            "feedback": "<text>"
-        }}
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"feedback": content}
-
-    # ---------------------------------------------------------
-    # 📙 STUDY PLAN
-    # ---------------------------------------------------------
-    def generate_personalized_study_plan(self, student_performance: Dict, course_content: Dict) -> Dict:
-        prompt = f"""
-        Create a personalized study plan based on:
-        Student Performance: {json.dumps(student_performance, indent=2)}
-        Course Content: {json.dumps(course_content, indent=2)}
-
-        Focus on weak areas, suggest time allocations, and include motivational tips.
-        Return JSON format.
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"plan_text": content}
-
-    # ---------------------------------------------------------
-    # 📕 ANSWER QUESTIONS
-    # ---------------------------------------------------------
-    def answer_student_question(self, question: str, course_context: str) -> str:
-        prompt = f"""
-        Based on this course content, answer the student's question clearly and accurately.
-
-        Course Context: {course_context}
-        Student Question: {question}
-
-        Respond in an educational, supportive tone.
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        return response.choices[0].message.content.strip()
-
-    # ---------------------------------------------------------
-    # 📊 PERFORMANCE ANALYSIS
-    # ---------------------------------------------------------
-    def analyze_student_performance(self, student_data: Dict) -> Dict:
-        prompt = f"""
-        Analyze this student's performance data:
-        {json.dumps(student_data, indent=2)}
-
-        Identify strengths, weaknesses, and give 3 actionable recommendations.
-        Return JSON format:
-        {{
-            "strengths": [...],
-            "weaknesses": [...],
-            "recommendations": [...]
-        }}
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"analysis_text": content}
-
-    # ---------------------------------------------------------
-    # 📢 ANNOUNCEMENT / REMINDER
-    # ---------------------------------------------------------
-    def create_course_announcement(self, context: str, urgency: str = "normal") -> str:
-        prompt = f"""
-        Create a {urgency} announcement for students based on:
-        {context}
-
-        Keep it professional, engaging, and concise.
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        return response.choices[0].message.content.strip()
-
-    def generate_reminder_message(self, event_type: str, details: Dict) -> str:
-        prompt = f"""
-        Write a friendly reminder for students about:
-        Event Type: {event_type}
-        Details: {json.dumps(details, indent=2)}
-        Keep it polite and short.
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        return response.choices[0].message.content.strip()
-
-    # ---------------------------------------------------------
-    # 📘 RESOURCE & SCHEDULING
-    # ---------------------------------------------------------
-    def recommend_learning_resources(self, student_profile: Dict, topic: str) -> Dict:
-        prompt = f"""
-        Recommend learning resources for:
-        Student Profile: {json.dumps(student_profile, indent=2)}
-        Topic: {topic}
-
-        Include books, videos, and articles. Return as JSON:
-        {{
-            "books": [...],
-            "videos": [...],
-            "articles": [...]
-        }}
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"resources_text": content}
-
-    def schedule_study_sessions(self, student_availability: Dict, course_schedule: Dict) -> Dict:
-        prompt = f"""
-        Create an optimal study schedule based on:
-        Student Availability: {json.dumps(student_availability, indent=2)}
-        Course Schedule: {json.dumps(course_schedule, indent=2)}
-
-        Return JSON format with session times and durations.
-        """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        content = response.choices[0].message.content.strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {"schedule_text": content}
-
-    # ---------------------------------------------------------
-    # 🧩 MCP Integration
-    # ---------------------------------------------------------
     def call_tool(self, tool_name: str, params: dict):
-        print(f"🔧 Calling tool: {tool_name}")
-        print(f"📍 URL: {self.mcp_base_url}/call")
-        print(f"📦 Params: {json.dumps(params, indent=2)}")
-        
-        try:
-            response = requests.post(
-                f"{self.mcp_base_url}/call",
-                json={
-                    "tool_name": tool_name,
-                    "params": params
-                },
-                timeout=10  # Add timeout to avoid hanging
-            )
-            print(f"📡 Response status: {response.status_code}")
-            print(f"📄 Response content: {response.text[:500]}")  # Print first 500 chars of response
-            
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection Error: Could not connect to {self.mcp_base_url}")
-            print(f"Error details: {str(e)}")
-            raise
-        except requests.exceptions.Timeout as e:
-            print("❌ Request timed out after 10 seconds")
-            raise
-        except Exception as e:
-            print(f"❌ Unexpected error in call_tool: {str(e)}")
-            raise
+        """Call a tool through MCP"""
+        return self.mcp_client.call_tool(tool_name, params)
 
     def list_tools(self):
-        response = requests.get(f"{self.mcp_base_url}/tools")
-        response.raise_for_status()
-        return response.json()
+        """List available tools"""
+        return self.mcp_client.list_tools()
+
+    # Expose memory methods
+    def clear_memory(self):
+        self.memory.clear()
+
+    def get_memory(self):
+        return self.memory.get_history()
+
+    def get_conversation_history(self):
+        return self.memory.conversation_history

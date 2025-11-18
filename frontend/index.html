@@ -232,6 +232,12 @@
       background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
     }
 
+    .btn-danger {
+      background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+
     .quick-actions {
       display: flex;
       gap: 10px;
@@ -271,6 +277,17 @@
       cursor: pointer;
       color: #dc3545;
       font-weight: bold;
+    }
+
+    .memory-indicator {
+      background: #e8f4f8;
+      padding: 8px 15px;
+      border-radius: 20px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #0c5460;
     }
 
     input[type="file"] {
@@ -328,6 +345,12 @@
       </select>
     </div>
 
+    <!-- ✅ Memory indicator and clear button -->
+    <div class="memory-indicator" id="memory-indicator" style="display: none;">
+      <span id="memory-count">0</span> messages in memory
+      <button id="clear-memory-btn" class="btn btn-danger" title="Clear conversation history">🗑️ Clear</button>
+    </div>
+
     <div id="file-indicator" class="file-indicator" style="display: none;">
       <span id="file-name">No file selected</span>
       <span class="remove" id="remove-file">✕</span>
@@ -380,6 +403,9 @@
     const fileName = document.getElementById("file-name");
     const removeFile = document.getElementById("remove-file");
     const quickActions = document.querySelectorAll(".quick-btn");
+    const memoryIndicator = document.getElementById("memory-indicator");
+    const memoryCount = document.getElementById("memory-count");
+    const clearMemoryBtn = document.getElementById("clear-memory-btn");
 
     // Configuration
     const BASE_URL = "http://localhost:8000";
@@ -390,6 +416,7 @@
       updateTime();
       loadCourses();
       setupEventListeners();
+      updateMemoryDisplay();
     });
 
     // Update current time in welcome message
@@ -443,6 +470,9 @@
       fileInput.addEventListener("change", handleFileUpload);
       removeFile.addEventListener("click", clearFile);
 
+      // ✅ Clear memory button
+      clearMemoryBtn.addEventListener("click", clearMemory);
+
       // Quick action buttons
       quickActions.forEach(button => {
         button.addEventListener("click", function () {
@@ -451,6 +481,58 @@
           sendMessage();
         });
       });
+    }
+
+    // ✅ Update memory display
+    async function updateMemoryDisplay() {
+      try {
+        const response = await fetch(`${BASE_URL}/memory`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          memoryCount.textContent = data.size;
+          
+          // Show memory indicator if there are messages
+          if (data.size > 0) {
+            memoryIndicator.style.display = "flex";
+          } else {
+            memoryIndicator.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching memory:", error);
+      }
+    }
+
+    // ✅ Clear memory function
+    async function clearMemory() {
+      if (!confirm("Are you sure you want to clear the conversation history?")) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`${BASE_URL}/clear-memory`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          }
+        });
+
+        if (response.ok) {
+          appendMessage("✅ Conversation history cleared!", "assistant");
+          updateMemoryDisplay();
+        } else {
+          appendMessage("❌ Failed to clear memory", "assistant");
+        }
+      } catch (error) {
+        console.error("Error clearing memory:", error);
+        appendMessage("❌ Error clearing memory", "assistant");
+      }
     }
 
     // Handle file upload
@@ -511,6 +593,7 @@
         typingIndicator.remove();
       }
     }
+
     async function sendMessage() {
       const message = userInput.value.trim();
       const courseId = courseSelect.value;
@@ -573,6 +656,9 @@
         } else {
           appendMessage("I'm not sure how to help with that. Try asking about quizzes, grading, or announcements.", "assistant");
         }
+
+        // Update memory display after each message
+        updateMemoryDisplay();
 
         // Clear file after successful send
         clearFile();
