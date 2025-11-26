@@ -15,7 +15,7 @@ from models import QuizRequest, GradingRequest, AnnouncementRequest
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 
 class AcademicAIAgent:
     def __init__(self):
@@ -100,6 +100,9 @@ class AcademicAIAgent:
 
     def handle_user_request(self, user_prompt: str, context: Dict = None) -> Dict:
         """Main entry point - analyzes intent and routes to appropriate tool"""
+        
+        self.memory.add("General Context", context or "No additional context provided.")
+
         intent_analysis = self.analyze_intent(user_prompt)
         
         print(f"Intent Analysis: {intent_analysis}")

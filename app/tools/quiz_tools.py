@@ -27,6 +27,8 @@ class QuizTools:
                 }}
             ]
         }}
+
+        AND NOTHING ELSE.
         """
 
         response = self.client.chat.completions.create(

@@ -13,6 +13,8 @@ class AnnouncementTools:
         {context}
 
         Keep it professional, engaging, and concise.
+
+        End with Regards.
         """
 
         response = self.client.chat.completions.create(

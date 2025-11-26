@@ -335,6 +335,14 @@
     </div>
 
     <div class="control-group">
+      <span class="control-label">Course Content:</span>
+      <select id="course-content">
+        <option value="auto">Select contents...</option>
+        <!-- Courses will be loaded dynamically -->
+      </select>
+    </div>
+
+    <div class="control-group">
       <span class="control-label">Action Type:</span>
       <select id="action-type">
         <option value="auto">Auto-detect</option>
@@ -398,6 +406,7 @@
     const fileInput = document.getElementById("file-input");
     const uploadBtn = document.getElementById("upload-btn");
     const courseSelect = document.getElementById("course-select");
+    const courseContentSelect = document.getElementById("course-content");
     const actionType = document.getElementById("action-type");
     const fileIndicator = document.getElementById("file-indicator");
     const fileName = document.getElementById("file-name");
@@ -431,13 +440,9 @@
       try {
         // In a real implementation, we would fetch from /courses endpoint
         // For now, we'll simulate with some example courses
-        const exampleCourses = [
-          { id: 1, name: "CS101 - Introduction to Programming" },
-          { id: 2, name: "MATH201 - Calculus II" },
-          { id: 3, name: "ENG102 - Academic Writing" },
-          { id: 4, name: "PHY101 - General Physics" }
-        ];
-
+        const exampleCourses = await getCourses();
+        
+        console.log("Fetched courses:", exampleCourses);
         // Clear existing options except the first one
         while (courseSelect.options.length > 1) {
           courseSelect.remove(1);
@@ -447,7 +452,26 @@
         exampleCourses.forEach(course => {
           const option = document.createElement("option");
           option.value = course.id;
-          option.textContent = course.name;
+          option.textContent = course.shortname;
+          courseSelect.appendChild(option);
+        });
+
+      } catch (error) {
+        console.error("Failed to load courses:", error);
+      }
+    }
+
+     async function loadCourseContents() {
+      try {
+        // In a real implementation, we would fetch from /courses endpoint
+        // For now, we'll simulate with some example courses
+        const courseContents = await getCourseContents();
+
+        // Add course options
+        courseContents.forEach(content => {
+          const option = document.createElement("option");
+          option.value = content.id;
+          option.textContent = content.name;
           courseSelect.appendChild(option);
         });
 
@@ -677,6 +701,29 @@
         reader.onerror = error => reject(error);
         reader.readAsText(file);
       });
+    }
+
+    async function  getCourses(){
+      var response = await fetch(`${BASE_URL}/courses`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        }
+      });
+
+      console.log("Courses response:", response);
+      return response.json().then(data => data.courses);
+    }
+
+    async function  getCourseContents(){
+      var response = await fetch(`${BASE_URL}/course-contents`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        }
+      });
+
+      return response.json().then(data => data.contents);
     }
   </script>
 

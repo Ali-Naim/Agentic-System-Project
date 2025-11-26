@@ -3,6 +3,9 @@ from fastapi import FastAPI, APIRouter, HTTPException
 from typing import Dict, Any
 from ai_agent import AcademicAIAgent
 from models import QuizRequest, GradingRequest, AnnouncementRequest, ToolRequest
+import json
+import re
+
 
 router = APIRouter()
 ai_agent = AcademicAIAgent()
@@ -61,15 +64,25 @@ def call_tool(req: ToolRequest):
             # Attempt to post/create quiz in Moodle with available methods
             moodle_result = None
             try:
+                
+                print(hasattr(ai_agent.moodle, "create_quiz_using_forum"))
                 if hasattr(ai_agent.moodle, "create_quiz_using_forum"):
-                    moodle_result = ai_agent.moodle.create_quiz_using_forum(
-                        qr.course_id,
-                        {
-                            "name": f"AI Quiz - {qr.focus_area}",
-                            "description": f"Generated quiz on {qr.focus_area}",
-                            "questions": quiz.get("questions", [])
-                        }
+                    print(quiz)
+                    safe_topic = re.sub(r'[^A-Za-z0-9_\-]', '_', qr.topic) 
+                    moodle_result = ai_agent.moodle.create_and_upload_quiz_pdf(
+                            quiz_json=quiz,
+                            filename=f"{safe_topic}.pdf",
+                            course_id=qr.course_id
                     )
+                        
+                    # moodle_result = ai_agent.moodle.create_quiz_using_forum(
+                    #     qr.course_id,
+                    #     {
+                    #         "name": f"AI Quiz - {qr.focus_area}",
+                    #         "description": f"Generated quiz on {qr.focus_area}",
+                    #         "questions": quiz.get("raw_output", [])
+                    #     }
+                    # )
                 elif hasattr(ai_agent.moodle, "create_quiz"):
                     moodle_result = ai_agent.moodle.create_quiz(qr.course_id, quiz)
             except Exception as e:

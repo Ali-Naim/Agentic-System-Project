@@ -95,6 +95,24 @@ async def list_tools():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/courses")
+async def list_courses():
+    """List available courses (example endpoint)"""
+    try:
+        courses = ai_agent.moodle.get_user_courses()
+        return {"courses": courses}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/course-contents/{course_id}")
+async def list_courses():
+    """List available courses (example endpoint)"""
+    try:
+        contents = ai_agent.moodle.get_course_contents()
+        return {"contents": contents}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Keep direct endpoints for specific use cases
 @app.post("/direct-action")
 async def direct_action(action: str, params: Dict):

@@ -42,7 +42,7 @@ class QuizRequest(BaseModel):
     course_id: int
     topic: str
     focus_area: str
-    difficulty: str
+    difficulty: Optional[str] = "medium"
     number_of_questions: int
 
 class GradingRequest(BaseModel):
