@@ -14,7 +14,11 @@ class AnnouncementTools:
 
         Keep it professional, engaging, and concise.
 
-        End with Regards.
+        It is an annoucement for a university course.
+
+        Don't exceed 150 words.
+
+        Don't include greetings or sign-offs.
         """
 
         response = self.client.chat.completions.create(

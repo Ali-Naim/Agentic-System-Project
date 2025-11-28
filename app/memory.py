@@ -1,4 +1,5 @@
 from typing import List, Dict
+import uuid
 
 class ConversationMemory:
     """Manages short-term conversation history"""
@@ -41,3 +42,5 @@ class ConversationMemory:
     def get_history(self) -> List[Dict[str, str]]:
         """Get raw history"""
         return self.conversation_history
+    
+

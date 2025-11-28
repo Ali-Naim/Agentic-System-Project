@@ -61,9 +61,14 @@ class AnnouncementRequest(BaseModel):
 class UserRequest(BaseModel):
     message: str
     course_id: Optional[int] = None
+    forum_id: Optional[int] = None
     action_type: Optional[str] = None
     file: Optional[str] = None
+    filename: Optional[str] = None
 
 class ToolRequest(BaseModel):
     tool_name: str
     params: Dict[str, Any]
+
+class GraphQARequest(BaseModel):
+    question: str = Field(..., description="The user question to answer from graph.")

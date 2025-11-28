@@ -2,7 +2,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from typing import Dict, Any
 from ai_agent import AcademicAIAgent
-from models import QuizRequest, GradingRequest, AnnouncementRequest, ToolRequest
+from models import GraphQARequest, QuizRequest, GradingRequest, AnnouncementRequest, ToolRequest
 import json
 import re
 
@@ -70,9 +70,9 @@ def call_tool(req: ToolRequest):
                     print(quiz)
                     safe_topic = re.sub(r'[^A-Za-z0-9_\-]', '_', qr.topic) 
                     moodle_result = ai_agent.moodle.create_and_upload_quiz_pdf(
-                            quiz_json=quiz,
-                            filename=f"{safe_topic}.pdf",
-                            course_id=qr.course_id
+                            quiz_json=quiz
+                            # filename=f"{safe_topic}.pdf",
+                            # course_id=qr.course_id
                     )
                         
                     # moodle_result = ai_agent.moodle.create_quiz_using_forum(
@@ -149,6 +149,11 @@ def call_tool(req: ToolRequest):
             analysis = ai_agent.performance_tools.analyze_performance(grades)
             return {"analysis": analysis}
 
+        elif tool_name == "graph_qa":
+            gq = GraphQARequest(**params)
+            answer = ai_agent.graph_qa_tools.answer_q(gq.question)
+            return answer
+        
         else:
             raise HTTPException(status_code=400, detail=f"Unknown tool: {tool_name}")
 

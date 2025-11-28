@@ -10,16 +10,23 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 import os
 import json
+import PyPDF2
+from io import BytesIO
+import tempfile
+import shutil
+from typing import Tuple, List
+import hashlib
 # Load environment variables from .env (if present)
 load_dotenv()
 
 
 class MoodleIntegration:
-    def __init__(self):
+    def __init__(self, neo4j_graph_memory=None):
         # Read base URL and token from environment variables. If not set, fall back to the previous defaults.
         # NOTE: Ensure your .env uses KEY=VALUE format (not KEY:VALUE) so python-dotenv can parse it.
         self.base_url = os.getenv('MOODLE_BASE_URL', 'https://teaching-assistant-agent.moodlecloud.com/webservice/rest/server.php')
         self.token = os.getenv('EXTERNAL_MOODLE_TOKEN', '4140e426c7adb15979c0c18ce57bd45d')
+        self.neo4j_graph = neo4j_graph_memory
 
     def make_api_call(self, function: str, data: Dict = None) -> Dict:
         """Make API call to Moodle"""
@@ -365,6 +372,7 @@ class MoodleIntegration:
             "forumid": forum_id,
             "subject": subject,
             "message": clean_message,
+            "attachmentsdraftitemid": draft_itemid
         }
         
         print(f"\nPosting to forum {forum_id} with attachment (draft itemid: {draft_itemid}):")
@@ -428,83 +436,13 @@ class MoodleIntegration:
             }
 
 
-    def create_and_upload_quiz_pdf(self, quiz_json: dict, filename: str, course_id: int, forum_id: int = 6):
-        """
-        Complete workflow with proper file attachment to forum.
-        """
-        
-        # Step 1: Create PDF
-        local_path = f"/tmp/{filename}"
-        self.export_quiz_to_pdf(quiz_json, local_path)
-        print(f"✓ PDF created: {filename}")
-        
-        # Step 2: Upload to Moodle draft area
-        upload_result = self.upload_file(local_path, course_id)
-        
-        if not upload_result.get('success'):
-            return {"success": False, "message": "Failed to upload PDF"}
-        
-        draft_itemid = upload_result.get('draft_itemid')
-        print(f"✓ PDF uploaded to draft area (itemid: {draft_itemid})")
-        
-        # Step 3: Post to forum WITH FILE ATTACHMENT (not URL)
-        subject = f"New Quiz: {filename.replace('.pdf', '').replace('_', ' ')}"
-        message = f"""
-        <p>A new quiz has been generated and is attached to this post!</p>
-        <p><strong>Quiz Topic:</strong> {filename.replace('.pdf', '').replace('_', ' ')}</p>
-        <p><strong>The PDF file is attached to this post - download it from the attachments below.</strong></p>
-        """
-        
-        forum_result = self.post_pdf_to_forum_with_attachment(
-            forum_id=forum_id,
-            subject=subject,
-            message=message,
-            draft_itemid=draft_itemid  # This will attach the file to the forum post
-        )
-        
-        if forum_result.get('success'):
-            print(f"✓ Posted to forum with PDF attachment!")
-            
-            # Optional: Also create a resource in the course
-            resource_result = self.attach_draft_file_to_course(
-                course_id=course_id,
-                draft_item_id=draft_itemid,
-                filename=filename
-            )
-            
-            if resource_result.get('success'):
-                print(f"✓ Also created course resource with PDF!")
-            
-            return {
-                "success": True,
-                "filename": filename,
-                "discussion_id": forum_result.get('discussion_id'),
-                "resource_result": resource_result,
-                "message": "Quiz PDF created, uploaded, and posted to forum as attachment!"
-            }
-        
-        # If forum posting fails, try alternative: create course resource only
-        print("Forum posting failed, trying to create course resource instead...")
-        resource_result = self.attach_draft_file_to_course(
-            course_id=course_id,
-            draft_item_id=draft_itemid,
-            filename=filename
-        )
-        
-        if resource_result.get('success'):
-            return {
-                "success": True,
-                "filename": filename,
-                "resource_id": resource_result.get('resource_id'),
-                "message": "Quiz PDF created and added as course resource (forum post failed)"
-            }
-        
-        return {
+    def create_and_upload_quiz_pdf(self, quiz_json: dict, forum_id: int = 6):
+       result = self.create_google_forms_quiz_via_apps_script(quiz_json, forum_id)
+       if result.get('success'):
+            return result
+       return {
             "success": False,
-            "message": "Failed to post to forum and create resource",
-            "upload_result": upload_result,
-            "forum_result": forum_result,
-            "resource_result": resource_result
+            "message": "Failed to post to forum and create resource"
         }
 
 
@@ -555,3 +493,125 @@ class MoodleIntegration:
             "upload_result": upload_result,
             "resource_result": resource_result
         }
+    
+
+    def create_google_forms_quiz_via_apps_script(self, quiz_data: Dict, forum_id: int) -> Dict:
+        """
+        Create a Google Forms quiz using Apps Script web app.
+        Enhanced with better error handling and data formatting.
+        """
+        try:
+            script_url = os.getenv('APPS_SCRIPT_WEB_APP_URL', "https://script.google.com/macros/s/AKfycbxQlmRO42rpDCytcXzIIAVXmXoUnQ9SLoZDbw3k9Eu5RWMFZJV1bB7GICM5K7DgQfKz/exec")
+            if not script_url:
+                return {
+                    "success": False, 
+                    "error": "APPS_SCRIPT_WEB_APP_URL not set in environment variables"
+                }
+
+            # Format quiz data for Apps Script
+            formatted_quiz = self._format_quiz_for_google_forms(quiz_data)
+            
+            print(f"📤 Sending quiz data to Google Apps Script...")
+            print(f"📝 Quiz: {formatted_quiz['quiz_title']}")
+            print(f"❓ Questions: {len(formatted_quiz.get('questions', []))}")
+
+            # Send request to Apps Script
+            response = requests.post(
+                script_url,
+                json=formatted_quiz,
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                
+                if result.get('success'):
+                    form_url = result['form_url']
+                    form_id = result['form_id']
+                    
+                    print(f"✅ Google Forms quiz created successfully!")
+                    print(f"🔗 Form URL: {form_url}")
+                    print(f"🆔 Form ID: {form_id}")
+
+                    # Post to Moodle forum
+                    forum_result = self._post_quiz_to_moodle_forum(
+                        forum_id, quiz_data, form_url
+                    )
+
+                    return {
+                        "success": True,
+                        "form_url": form_url,
+                        "form_id": form_id,
+                        "edit_url": result.get('edit_url'),
+                        "forum_discussion_id": forum_result.get('discussionid'),
+                        "message": "Google Forms quiz created and posted to Moodle"
+                    }
+                else:
+                    return {
+                        "success": False, 
+                        "error": f"Apps Script error: {result.get('error', 'Unknown error')}"
+                    }
+            else:
+                return {
+                    "success": False, 
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                }
+
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": "Request timeout - Apps Script took too long to respond"}
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"Network error: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+    def _format_quiz_for_google_forms(self, quiz_data: Dict) -> Dict:
+        """Format quiz data for Google Forms API"""
+        questions = []
+        
+        for i, q in enumerate(quiz_data.get('questions', [])):
+            question = {
+                'question': q.get('question', f'Question {i+1}'),
+                'options': q.get('options', []),
+                'answer': q.get('answer', 0),  # Index of correct answer
+                'feedback': q.get('explanation', '')  # Feedback for correct answer
+            }
+            questions.append(question)
+        
+        return {
+            'quiz_title': quiz_data.get('name', 'AI Generated Quiz'),
+            'quiz_description': quiz_data.get('description', ''),
+            'questions': questions
+        }
+
+    def _post_quiz_to_moodle_forum(self, forum_id: int, quiz_data: Dict, form_url: str) -> Dict:
+        """Post the Google Forms quiz link to Moodle forum"""
+        
+        message = f"""
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2 style="color: #2c3e50; margin: 0 0 20px 0;">🎯 {quiz_data.get('name', 'AI Generated Quiz')}</h2>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <p style="margin: 0;"><strong>Description:</strong> {quiz_data.get('description', '')}</p>
+            </div>
+            
+            <div style="background: #e8f5e8; padding: 20px; border-radius: 8px;">
+                <h3 style="color: #27ae60; margin: 0 0 15px 0;">📝 Take the Quiz</h3>
+                <p style="margin: 0 0 15px 0;">This quiz was automatically generated and is hosted on Google Forms.</p>
+                <a href="{form_url}" 
+                target="_blank" 
+                style="display: inline-block; background: #4285f4; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; margin-bottom: 10px;">
+                    🚀 Start Quiz on Google Forms
+                </a>
+                <p style="margin: 10px 0 0 0; font-size: 14px; color: #666;">
+                    <em>Note: You'll need a Google account to submit the form</em>
+                </p>
+            </div>
+        </div>
+        """
+
+        return self.post_forum_discussion(
+            forum_id=forum_id,  # Default forum ID for quizzes
+            subject=f"Google Forms Quiz: {quiz_data.get('name', 'AI Generated Quiz')}",
+            message=message
+        )

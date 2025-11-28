@@ -1,0 +1,553 @@
+  def extract_pdf_files_from_course_contents(self, course_data: List[Dict]) -> List[Dict]:
+        """
+        CORRECTED: Extract all PDF files from Moodle course data.
+        
+        Args:
+            course_data: The JSON response from core_course_get_contents
+            
+        Returns:
+            List of dictionaries containing PDF information
+        """
+        pdf_files = []
+        
+        for section in course_data:
+            section_id = section.get('id')
+            section_name = section.get('name', 'Unknown Section')
+            
+            # Check if section has modules
+            if 'modules' not in section:
+                continue
+            
+            for module in section['modules']:
+                # Check if module has contents (this is where PDFs are stored)
+                if 'contents' not in module or not module['contents']:
+                    continue
+                
+                # Process each content item in the module
+                for content in module['contents']:
+                    # Check if it's a PDF file
+                    if content.get('mimetype') == 'application/pdf':
+                        pdf_info = {
+                            'doc_id': f"moodle_{section_id}_{module['id']}_{content['filename']}",
+                            'filename': content['filename'],
+                            'fileurl': content['fileurl'],
+                            'filesize': content['filesize'],
+                            'timecreated': content.get('timecreated'),
+                            'timemodified': content.get('timemodified'),
+                            'author': content.get('author', 'Unknown'),
+                            'module_name': module.get('name', 'Unknown Module'),
+                            'section_name': section_name,
+                            'section_id': section_id,
+                            'module_id': module['id'],
+                            'context_id': module.get('contextid'),  # Use module's contextid
+                            'metadata': {
+                                'section': section_name,
+                                'module': module.get('name'),
+                                'author': content.get('author'),
+                                'filesize': content['filesize'],
+                                'timecreated': content.get('timecreated'),
+                                'timemodified': content.get('timemodified'),
+                                'source': 'moodle',
+                                'moodle_url': content['fileurl'].split('?')[0],
+                                'course_id': section_id
+                            }
+                        }
+                        pdf_files.append(pdf_info)
+        
+        return pdf_files
+    def get_resource_file_url(self, module_id: int, context_id: int) -> str:
+        """
+        Get the downloadable file URL using core_files_get_files API.
+        This uses the core_files_get_files function you have enabled.
+        """
+        try:
+            # Try using core_files_get_files with the context ID
+            result = self.make_api_call(
+                'core_files_get_files',
+                {
+                    'contextid': context_id,
+                    'component': 'mod_resource',
+                    'filearea': 'content',
+                    'itemid': 0
+                }
+            )
+            
+            # Get the file URL from the response
+            if 'files' in result and result['files']:
+                for file_info in result['files']:
+                    if file_info.get('mimetype') == 'application/pdf':
+                        return file_info.get('fileurl')
+            
+        except Exception as e:
+            print(f"    Could not use files API: {e}")
+        
+        return None
+    
+    def download_pdf(self, file_url: str, module_id: int = None, context_id: int = None) -> bytes:
+        """
+        Enhanced download using session-based approach for Moodle Cloud.
+        """
+        print(f"  Downloading {file_url.split('/')[-1]}...")
+        
+        # Create a session to maintain cookies
+        session = requests.Session()
+        
+        # Method 1: Try session-based approach with token in headers
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'User-Agent': 'MoodleBot/1.0',
+                'Accept': 'application/pdf, */*'
+            }
+            
+            print("    Trying session with Bearer token...")
+            response = session.get(file_url, headers=headers, timeout=30, allow_redirects=True)
+            
+            if response.status_code == 200 and response.content.startswith(b'%PDF-'):
+                print("    ✓ Success with Bearer token!")
+                return response.content
+            else:
+                print(f"    ✗ HTTP {response.status_code}, Content-Type: {response.headers.get('content-type')}")
+                
+        except Exception as e:
+            print(f"    Bearer token failed: {e}")
+
+        # Method 2: Try with token as parameter (your existing approach)
+        token_params = [
+            f"wstoken={self.token}",
+            f"token={self.token}",
+        ]
+        
+        for param in token_params:
+            try:
+                if '?' in file_url:
+                    download_url = f"{file_url}&{param}"
+                else:
+                    download_url = f"{file_url}?{param}"
+                
+                print(f"    Trying with {param.split('=')[0]}...")
+                response = session.get(download_url, timeout=30, allow_redirects=True)
+                
+                if response.status_code == 200 and response.content.startswith(b'%PDF-'):
+                    print(f"    ✓ Success with {param.split('=')[0]}!")
+                    return response.content
+                else:
+                    # Check if we got a JSON error
+                    if 'application/json' in response.headers.get('content-type', ''):
+                        error_data = response.json()
+                        print(f"    ✗ {error_data.get('errorcode', 'unknown error')}")
+                    else:
+                        print(f"    ✗ HTTP {response.status_code}")
+                        
+            except Exception as e:
+                print(f"    ✗ {str(e)}")
+                continue
+
+        # Method 3: Try core_files_get_files with returncontents
+        if context_id:
+            try:
+                print("    Trying core_files_get_files with returncontents...")
+                result = self.make_api_call(
+                    'core_files_get_files',
+                    {
+                        'contextid': context_id,
+                        'component': 'mod_resource', 
+                        'filearea': 'content',
+                        'itemid': 0,
+                        'returncontents': 1  # This is crucial!
+                    }
+                )
+                
+                if 'files' in result and result['files']:
+                    for file_info in result['files']:
+                        if file_info.get('mimetype') == 'application/pdf' and file_info.get('content'):
+                            import base64
+                            pdf_content = base64.b64decode(file_info['content'])
+                            if pdf_content.startswith(b'%PDF-'):
+                                print("    ✓ Success with files API content!")
+                                return pdf_content
+                                
+            except Exception as e:
+                print(f"    Files API failed: {e}")
+
+        # Method 4: Last resort - try to construct a direct URL
+        try:
+            print("    Trying direct URL construction...")
+            # Extract the file path from the pluginfile URL
+            # Format: /webservice/pluginfile.php/{contextid}/mod_resource/content/1/filename.pdf
+            parts = file_url.split('/pluginfile.php/')
+            if len(parts) > 1:
+                path_parts = parts[1].split('/')
+                context_id_from_url = path_parts[0]
+                rest_of_path = '/'.join(path_parts[1:])
+                
+                # Construct a direct download URL
+                base_domain = self.base_url.split('/webservice/rest/server.php')[0]
+                direct_url = f"{base_domain}/pluginfile.php/{context_id_from_url}/{rest_of_path}"
+                
+                response = session.get(direct_url, timeout=30)
+                if response.status_code == 200 and response.content.startswith(b'%PDF-'):
+                    print("    ✓ Success with direct URL!")
+                    return response.content
+                    
+        except Exception as e:
+            print(f"    Direct URL failed: {e}")
+
+        raise ValueError(
+            "All download methods failed. Required admin action:\n"
+            "1. Moodle Admin: Site Administration → Users → Permissions → Define roles\n"
+            "   - Edit 'Web service user' role\n" 
+            "   - Enable: 'moodle/course:view', 'mod/resource:view', 'repository/filesystem:view'\n"
+            "2. Or enable 'Download files' capability for web service user\n"
+            "3. Alternative: Use manual download workaround below"
+        )
+
+    def extract_text_from_pdf_file(self, file_path: str) -> str:
+        """
+        Extract text from a local PDF file.
+        
+        Args:
+            file_path: Path to local PDF file
+            
+        Returns:
+            Extracted text as string
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                pdf_content = f.read()
+            return self.extract_text_from_pdf(pdf_content)
+        except Exception as e:
+            raise ValueError(f"Failed to extract text from {file_path}: {str(e)}")
+
+    def chunk_text(self, text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Dict]:
+        """
+        Split text into chunks with overlap.
+        
+        Args:
+            text: The text to chunk
+            chunk_size: Size of each chunk in characters
+            chunk_overlap: Overlap between chunks in characters
+            
+        Returns:
+            List of chunk dictionaries with text and metadata
+        """
+        if not text or len(text.strip()) == 0:
+            return []
+        
+        chunks = []
+        start = 0
+        chunk_id = 0
+        
+        while start < len(text):
+            # Calculate end position
+            end = start + chunk_size
+            
+            # Adjust end to not break in the middle of a word if possible
+            if end < len(text):
+                # Try to find a sentence boundary
+                sentence_breaks = ['.', '!', '?', '\n\n', '\n']
+                for break_char in sentence_breaks:
+                    break_pos = text.find(break_char, end - 50, end + 50)
+                    if break_pos != -1 and break_pos > start + chunk_size // 2:
+                        end = break_pos + 1
+                        break
+                else:
+                    # Find word boundary
+                    word_break = text.rfind(' ', start + chunk_size // 2, end)
+                    if word_break != -1:
+                        end = word_break
+            
+            # Extract chunk
+            chunk_text = text[start:end].strip()
+            
+            if chunk_text:
+                chunks.append({
+                    'chunk_id': chunk_id,
+                    'text': chunk_text,
+                    'start_char': start,
+                    'end_char': end,
+                    'length': len(chunk_text)
+                })
+                chunk_id += 1
+            
+            # Move to next chunk with overlap
+            start = end - chunk_overlap
+            
+            # Prevent infinite loop
+            if start >= len(text):
+                break
+        
+        return chunks
+
+    def process_and_upload_chunks(self, chunks: List[Dict], pdf_info: Dict, course_id: int) -> int:
+        """
+        Process chunks and upload to Neo4j with embeddings.
+        
+        Args:
+            chunks: List of chunk dictionaries
+            pdf_info: PDF metadata information
+            course_id: Course ID for context
+            
+        Returns:
+            Number of successfully uploaded chunks
+        """
+        uploaded_count = 0
+        
+        for chunk in chunks:
+            try:
+                # Create unique document ID for each chunk
+                chunk_doc_id = f"{pdf_info['doc_id']}_chunk_{chunk['chunk_id']}"
+                
+                # Enhanced metadata for chunk
+                chunk_metadata = {
+                    **pdf_info['metadata'],
+                    'chunk_id': chunk['chunk_id'],
+                    'chunk_start_char': chunk['start_char'],
+                    'chunk_end_char': chunk['end_char'],
+                    'chunk_length': chunk['length'],
+                    'total_chunks': len(chunks),
+                    'processing_timestamp': self.get_current_timestamp(),
+                    'chunk_hash': self.generate_text_hash(chunk['text'])
+                }
+                
+                # Upload to Neo4j - this should handle embedding automatically
+                self.neo4j_graph.add_document(
+                    doc_id=chunk_doc_id,
+                    title=f"{pdf_info['module_name']} - Chunk {chunk['chunk_id'] + 1}",
+                    text=chunk['text'],
+                    metadata=chunk_metadata
+                )
+                
+                uploaded_count += 1
+                
+            except Exception as e:
+                print(f"    Warning: Failed to upload chunk {chunk['chunk_id']}: {str(e)}")
+                continue
+        
+        return uploaded_count
+
+    def cleanup_temp_directory(self, temp_dir: str):
+        """
+        Safely remove temporary directory and all contents.
+        
+        Args:
+            temp_dir: Path to temporary directory to remove
+        """
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                return True
+        except Exception as e:
+            print(f"Warning: Could not clean up temp directory {temp_dir}: {str(e)}")
+            return False
+
+    def get_current_timestamp(self) -> str:
+        """Get current timestamp in ISO format."""
+        from datetime import datetime
+        return datetime.now().isoformat()
+
+    def generate_text_hash(self, text: str) -> str:
+        """Generate SHA-256 hash of text for duplicate detection."""
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    def save_as_graph(self, course_id: int, chunk_size: int = 1000, chunk_overlap: int = 200):
+        """
+        Enhanced function to download PDFs locally, process with chunking/embedding,
+        save to Neo4j, then clean up local files.
+        
+        Args:
+            course_id: The Moodle course ID
+            chunk_size: Size of text chunks for processing
+            chunk_overlap: Overlap between chunks
+        """
+        print(f"\n{'='*60}")
+        print(f"Starting Enhanced Moodle to Neo4j Processing")
+        print(f"Course ID: {course_id}")
+        print(f"Chunk Size: {chunk_size}, Overlap: {chunk_overlap}")
+        print(f"{'='*60}\n")
+        
+        # Check if Neo4j graph memory is initialized
+        if self.neo4j_graph is None:
+            raise ValueError("Neo4j graph memory not initialized. Pass it during __init__")
+        
+        # Create temporary directory for downloads
+        temp_dir = tempfile.mkdtemp(prefix="moodle_pdfs_")
+        print(f"Created temporary directory: {temp_dir}")
+        
+        try:
+            # Step 1: Get course contents
+            print("Step 1: Fetching course contents from Moodle...")
+            course_content = self.get_course_contents(course_id)
+            print(f"  ✓ Retrieved {len(course_content)} sections")
+            
+            # Step 2: Extract PDF files
+            print("\nStep 2: Extracting PDF information...")
+            pdf_files = self.extract_pdf_files_from_course_contents(course_content)
+            
+            if not pdf_files:
+                print("  ⚠ No PDF files found in this course")
+                return {
+                    'total': 0,
+                    'successful': 0,
+                    'failed': 0,
+                    'pdf_files': []
+                }
+            
+            print(f"  ✓ Found {len(pdf_files)} PDF files\n")
+            for pdf in pdf_files:
+                print(f"  - {pdf['filename']} ({pdf['filesize']:,} bytes)")
+                print(f"    Section: {pdf['section_name']}")
+                print(f"    Module: {pdf['module_name']}")
+            
+            # Step 3: Download files locally
+            print(f"\nStep 3: Downloading files to local directory...")
+            print(f"{'='*60}")
+            
+            downloaded_files = []
+            for i, pdf_info in enumerate(pdf_files, 1):
+                try:
+                    print(f"\n[{i}/{len(pdf_files)}] Downloading: {pdf_info['filename']}")
+                    
+                    # Download PDF content
+                    pdf_content = self.download_pdf(
+                        pdf_info['fileurl'], 
+                        pdf_info.get('module_id'),
+                        pdf_info.get('context_id')
+                    )
+                    
+                    # Save to local file
+                    local_path = os.path.join(temp_dir, pdf_info['filename'])
+                    with open(local_path, 'wb') as f:
+                        f.write(pdf_content)
+                    
+                    pdf_info['local_path'] = local_path
+                    pdf_info['file_size'] = len(pdf_content)
+                    downloaded_files.append(pdf_info)
+                    
+                    print(f"  ✓ Downloaded and saved: {local_path}")
+                    print(f"  File size: {len(pdf_content):,} bytes")
+                    
+                except Exception as e:
+                    print(f"  ✗ Download failed: {str(e)}")
+                    continue
+            
+            # Step 4: Process files (chunking, embedding, Neo4j upload)
+            print(f"\nStep 4: Processing files (chunking, embedding, Neo4j upload)...")
+            print(f"{'='*60}")
+            
+            successful = 0
+            failed = 0
+            errors = []
+            total_chunks = 0
+            
+            for i, pdf_info in enumerate(downloaded_files, 1):
+                try:
+                    print(f"\n[{i}/{len(downloaded_files)}] Processing: {pdf_info['filename']}")
+                    print(f"  Local path: {pdf_info['local_path']}")
+                    
+                    # Extract text from local file
+                    print(f"  Extracting text...")
+                    text_content = self.extract_text_from_pdf_file(pdf_info['local_path'])
+                    print(f"  ✓ Extracted {len(text_content):,} characters")
+                    
+                    # Chunk the text
+                    print(f"  Chunking text...")
+                    chunks = self.chunk_text(text_content, chunk_size, chunk_overlap)
+                    print(f"  ✓ Created {len(chunks)} chunks")
+                    
+                    # Process each chunk and upload to Neo4j
+                    print(f"  Uploading chunks to Neo4j...")
+                    chunk_count = self.process_and_upload_chunks(
+                        chunks=chunks,
+                        pdf_info=pdf_info,
+                        course_id=course_id
+                    )
+                    
+                    total_chunks += chunk_count
+                    successful += 1
+                    print(f"  ✓ Successfully uploaded {chunk_count} chunks to Neo4j")
+                    
+                except Exception as e:
+                    error_msg = f"{pdf_info['filename']}: {str(e)}"
+                    print(f"  ✗ Processing failed: {str(e)}")
+                    errors.append(error_msg)
+                    failed += 1
+                    continue
+            
+            # Step 5: Clean up local files
+            print(f"\nStep 5: Cleaning up local files...")
+            self.cleanup_temp_directory(temp_dir)
+            print(f"  ✓ Temporary directory cleaned: {temp_dir}")
+            
+            # Final summary
+            print(f"\n{'='*60}")
+            print(f"Processing Complete!")
+            print(f"{'='*60}")
+            print(f"  Total PDFs found: {len(pdf_files)}")
+            print(f"  Successfully downloaded: {len(downloaded_files)}")
+            print(f"  Successfully processed: {successful}")
+            print(f"  Failed: {failed}")
+            print(f"  Total chunks created: {total_chunks}")
+            
+            if errors:
+                print(f"\nErrors encountered:")
+                for error in errors:
+                    print(f"  - {error}")
+            
+            print(f"{'='*60}\n")
+            
+            return {
+                'total_pdfs': len(pdf_files),
+                'downloaded': len(downloaded_files),
+                'successful': successful,
+                'failed': failed,
+                'total_chunks': total_chunks,
+                'temp_dir': temp_dir,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            # Ensure cleanup even if main process fails
+            self.cleanup_temp_directory(temp_dir)
+            raise e
+        
+
+    def debug_course_structure(self, course_id: int):
+        """
+        Debug method to see the actual course structure and find PDFs.
+        """
+        print(f"\n{'='*60}")
+        print(f"DEBUG: Course Structure Analysis")
+        print(f"{'='*60}")
+        
+        course_content = self.get_course_contents(course_id)
+        
+        for i, section in enumerate(course_content):
+            print(f"\nSection {i}: {section.get('name')} (ID: {section.get('id')})")
+            
+            if 'modules' in section:
+                for j, module in enumerate(section['modules']):
+                    print(f"  Module {j}: {module.get('name')} (Type: {module.get('modname')})")
+                    print(f"    Context ID: {module.get('contextid')}")
+                    print(f"    Module ID: {module.get('id')}")
+                    
+                    if 'contents' in module and module['contents']:
+                        print(f"    Contents found: {len(module['contents'])}")
+                        for k, content in enumerate(module['contents']):
+                            print(f"      Content {k}: {content.get('filename')}")
+                            print(f"        MIME Type: {content.get('mimetype')}")
+                            print(f"        File URL: {content.get('fileurl')}")
+                            print(f"        Size: {content.get('filesize')} bytes")
+                    else:
+                        print(f"    No contents in this module")
+        
+        print(f"\n{'='*60}")
+        print(f"Testing PDF extraction...")
+        
+        pdf_files = self.extract_pdf_files_from_course_contents(course_content)
+        print(f"Found {len(pdf_files)} PDF files:")
+        
+        for pdf in pdf_files:
+            print(f"  - {pdf['filename']}")
+            print(f"    Context ID: {pdf.get('context_id')}")
+            print(f"    Module ID: {pdf.get('module_id')}")
+            print(f"    File URL: {pdf['fileurl'][:100]}...")

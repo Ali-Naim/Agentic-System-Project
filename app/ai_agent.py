@@ -12,24 +12,50 @@ from tools import (
     PerformanceTools, StudyTools, ResourceTools
 )
 from models import QuizRequest, GradingRequest, AnnouncementRequest
+from graph_memory.neo4j_connector import Neo4jConnector
+from graph_memory.memory_schema import GraphMemory 
+from graph_memory.config import Config
+from models import GraphQARequest
+from tools.graph_qa import GraphQATool
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 
+config = Config(
+    neo4j_uri="bolt://127.0.0.1:7687",
+    neo4j_user="neo4j",
+    neo4j_password="MyPassword",
+    embedding_model_name="all-MiniLM-L6-v2",
+    chunk_size=500,
+    chunk_overlap=50
+)
+
+
+neo4j_connector = Neo4jConnector(cfg = config)
+
+neo4j_graph = GraphMemory(
+    connector=neo4j_connector,
+    cfg=config
+)
+
 class AcademicAIAgent:
     def __init__(self):
+        print(neo4j_connector)
         self.client = OpenAI(api_key=OPENAI_API_KEY)
-        self.moodle = MoodleIntegration()
+        self.moodle = MoodleIntegration(neo4j_graph_memory=neo4j_graph)
         self.mcp_client = MCPClient()
         self.memory = ConversationMemory(max_turns=5)
+        self.graph_memory = neo4j_graph
         self.tool_schemas = self._build_tool_schemas()
-        self.quiz_tools = QuizTools(self.client)
+        self.quiz_tools = QuizTools(self.client, self.graph_memory)
         self.grading_tools = GradingTools(self.client)
         self.announcement_tools = AnnouncementTools(self.client)
         self.performance_tools = PerformanceTools(self.client)
         self.study_tools = StudyTools(self.client)
         self.resource_tools = ResourceTools(self.client)
+        self.graph_qa_tools = GraphQATool(self.graph_memory)
+
 
     def _build_tool_schemas(self) -> Dict[str, Dict]:
         """Extract schemas from Pydantic models"""
@@ -37,6 +63,8 @@ class AcademicAIAgent:
             "generate_quiz": QuizRequest.model_json_schema(),
             "grade_assignment": GradingRequest.model_json_schema(),
             "post_announcement": AnnouncementRequest.model_json_schema(),
+            "graph_qa": GraphQARequest.model_json_schema(),
+
         }
 
     def _format_tools_for_prompt(self) -> str:
@@ -68,13 +96,14 @@ class AcademicAIAgent:
         
         Available Actions and their required parameters:
         {tools_description}
-        
         IMPORTANT RULES:
-        1. If a required parameter is NOT mentioned in the user request or recent history, add it to "missing_parameters"
-        2. ONLY include parameters in "parameters" if the user explicitly provided them
-        3. Do NOT make up values like "value", "default", "example", etc.
-        4. For missing parameters, leave them OUT of the parameters dict
-        5. Use context from previous messages to infer parameters when appropriate
+        1. Only consider REQUIRED parameters for the selected intent/tool.
+        2. Do NOT include missing parameters from other tools.
+        3. If a required parameter for the SELECTED tool is missing, add it to "missing_parameters".
+        4. ONLY include parameters in "parameters" if the user explicitly provided them
+        5. Do NOT make up values like "value", "default", "example", etc.
+        6. For missing parameters, leave them OUT of the parameters dict
+        7. Use context from previous messages to infer parameters when appropriate
         
         Return ONLY valid JSON (no markdown, no extra text):
         {{

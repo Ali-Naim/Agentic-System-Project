@@ -1,5 +1,8 @@
 from fpdf import FPDF
 import os
+import numpy as np
+import io
+from PyPDF2 import PdfReader
 
 def generate_pdf(topic, content):
     filepath = f"/tmp/{topic}.pdf"
@@ -12,3 +15,14 @@ def generate_pdf(topic, content):
 
     print("PDF saved at:", filepath)
     return filepath
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    text = []
+    for page in reader.pages:
+        try:
+            txt = page.extract_text() or ""
+            text.append(txt)
+        except:
+            continue
+    return "\n".join(text)

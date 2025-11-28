@@ -294,6 +294,44 @@
       display: none;
     }
 
+    .streaming-cursor::after {
+      content: '|';
+      animation: blink 1s infinite;
+      color: #800000;
+      font-weight: bold;
+    }
+
+    @keyframes blink {
+
+      0%,
+      50% {
+        opacity: 1;
+      }
+
+      51%,
+      100% {
+        opacity: 0;
+      }
+    }
+
+    /* Different styles for agent message types */
+    .agent-thought {
+      font-style: italic;
+      color: #666;
+      font-size: 0.9em;
+      margin-bottom: 5px;
+    }
+
+    .agent-action {
+      color: #0066cc;
+      font-weight: 500;
+      margin-bottom: 5px;
+    }
+
+    .agent-answer {
+      margin-bottom: 5px;
+    }
+
     /* Responsive adjustments */
     @media (max-width: 768px) {
       .message {
@@ -352,6 +390,8 @@
         <option value="question">Ask Question</option>
       </select>
     </div>
+
+    <!-- <div><button id="upload-mats-btn" class="btn">Upload Course Material</button></div> -->
 
     <!-- ✅ Memory indicator and clear button -->
     <div class="memory-indicator" id="memory-indicator" style="display: none;">
@@ -415,6 +455,7 @@
     const memoryIndicator = document.getElementById("memory-indicator");
     const memoryCount = document.getElementById("memory-count");
     const clearMemoryBtn = document.getElementById("clear-memory-btn");
+    // const uploadCourseMaterial = document.getElementById("upload-mats-btn");
 
     // Configuration
     const BASE_URL = "http://localhost:8000";
@@ -441,7 +482,7 @@
         // In a real implementation, we would fetch from /courses endpoint
         // For now, we'll simulate with some example courses
         const exampleCourses = await getCourses();
-        
+
         console.log("Fetched courses:", exampleCourses);
         // Clear existing options except the first one
         while (courseSelect.options.length > 1) {
@@ -461,28 +502,55 @@
       }
     }
 
-     async function loadCourseContents() {
-      try {
-        // In a real implementation, we would fetch from /courses endpoint
-        // For now, we'll simulate with some example courses
-        const courseContents = await getCourseContents();
 
-        // Add course options
-        courseContents.forEach(content => {
-          const option = document.createElement("option");
-          option.value = content.id;
-          option.textContent = content.name;
-          courseSelect.appendChild(option);
+    async function loadCourseContents() {
+      try {
+        const course_id = courseSelect.value;
+        if (!course_id) return;
+
+        const response = await fetch(`${BASE_URL}/course-contents/${course_id}`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" }
+        });
+
+        const data = await response.json();
+        const courseContents = data.contents || [];
+
+        console.log("Fetched course contents:", courseContents);
+
+        // Clear existing options (keep first/default option if present)
+        while (courseContentSelect.options.length > 1) {
+          courseContentSelect.remove(1);
+        }
+
+        // Extract module names + instance ids
+        courseContents.forEach(section => {
+          if (section.modules && Array.isArray(section.modules)) {
+            section.modules.forEach(module => {
+              const option = document.createElement("option");
+
+              // Show module *name* (e.g., "Announcements")
+              option.textContent = `${module.name} (ID: ${module.instance})`;
+
+              // Or if you want only the name:
+              // option.textContent = module.name;
+
+              option.value = module.instance;
+              courseContentSelect.appendChild(option);
+            });
+          }
         });
 
       } catch (error) {
-        console.error("Failed to load courses:", error);
+        console.error("Failed to load course contents:", error);
       }
     }
+
 
     // Set up event listeners
     function setupEventListeners() {
       sendBtn.addEventListener("click", sendMessage);
+      // uploadCourseMaterial.addEventListener("click", uploadMaterials);
       userInput.addEventListener("keypress", e => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
@@ -496,6 +564,13 @@
 
       // ✅ Clear memory button
       clearMemoryBtn.addEventListener("click", clearMemory);
+
+      // ✅ Course selection listener
+      courseSelect.addEventListener('change', async function () {
+        if (this.value) {  // Only load if a course is selected
+          await loadCourseContents();
+        }
+      });
 
       // Quick action buttons
       quickActions.forEach(button => {
@@ -520,7 +595,7 @@
         if (response.ok) {
           const data = await response.json();
           memoryCount.textContent = data.size;
-          
+
           // Show memory indicator if there are messages
           if (data.size > 0) {
             memoryIndicator.style.display = "flex";
@@ -613,8 +688,38 @@
     // Remove typing indicator
     function removeTypingIndicator() {
       const typingIndicator = document.getElementById("typing-indicator");
-      if (typingIndicator) {
+      const streamingMessage = document.getElementById("streaming-message");
+
+      // Only remove typing indicator if we don't have a streaming message yet
+      if (typingIndicator && !streamingMessage) {
         typingIndicator.remove();
+      }
+    }
+
+    async function uploadMaterials() {
+      const courseId = courseSelect.value;
+      if (!courseId) {
+        alert("Please select a course before uploading materials.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${BASE_URL}/save-as-graph/${courseId}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          appendMessage("✅ Course materials uploaded successfully!", "assistant");
+        } else {
+          appendMessage("❌ Failed to upload course materials", "assistant");
+        }
+      } catch (error) {
+        console.error("Error uploading materials:", error);
+        appendMessage("❌ Error uploading course materials", "assistant");
       }
     }
 
@@ -622,6 +727,7 @@
       const message = userInput.value.trim();
       const courseId = courseSelect.value;
       const action = actionType.value;
+      const forumid = courseContentSelect.value;
 
       if (!message && !uploadedFile) return;
 
@@ -636,52 +742,114 @@
       showTypingIndicator();
 
       try {
-        // Prepare JSON data instead of FormData
+        // Prepare request data
         const requestData = {
           message: message,
           course_id: courseId ? parseInt(courseId) : null,
-          action_type: action
+          action_type: action,
+          forum_id: forumid ? parseInt(forumid) : null
         };
 
-        // If there's a file, read it and include as base64 string
         if (uploadedFile) {
-          const fileContent = await readFileAsText(uploadedFile);
-          requestData.file = fileContent;
+          const base64 = await readFileAsBase64(uploadedFile);
+          requestData.file = base64;
+          requestData.filename = uploadedFile.name;
         }
 
         console.log("Sending request with data:", requestData);
 
-        // Send request to backend as JSON
-        let response;
-        try {
-          response = await fetch(`${BASE_URL}/chat`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(requestData)
-          });
-        } catch (error) {
-          console.error("Error during fetch:", error);
-        }
+        // Use streaming endpoint
+        const response = await fetch(`${BASE_URL}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestData)
+        });
 
-        if (!response.ok) {
-          throw new Error(`Server responded with ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
 
-        const data = await response.json();
-
-        // Remove typing indicator
+        // Remove typing indicator - we'll show streaming content instead
         removeTypingIndicator();
 
-        // Display response
-        if (data.reply) {
-          appendMessage(data.reply, "assistant");
-        } else {
-          appendMessage("I'm not sure how to help with that. Try asking about quizzes, grading, or announcements.", "assistant");
+        // Create a container for the streaming assistant message
+        const messageDiv = document.createElement("div");
+        messageDiv.classList.add("message", "assistant");
+
+        // Generate unique IDs for this message
+        const messageId = 'msg-' + Date.now();
+        messageDiv.id = messageId;
+
+        chatContainer.appendChild(messageDiv);
+
+        // Create content area with different sections using unique IDs
+        messageDiv.innerHTML = `
+      <div id="${messageId}-thoughts" class="agent-thought"></div>
+      <div id="${messageId}-actions" class="agent-action"></div>
+      <div id="${messageId}-answer" class="agent-answer"></div>
+      <div class="message-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+    `;
+
+        const thoughtsEl = document.getElementById(`${messageId}-thoughts`);
+        const actionsEl = document.getElementById(`${messageId}-actions`);
+        const answerEl = document.getElementById(`${messageId}-answer`);
+
+        // Read the stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+
+            // Keep the last incomplete line in buffer
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const dataStr = line.slice(6); // Remove 'data: ' prefix
+                try {
+                  const data = JSON.parse(dataStr);
+
+                  switch (data.type) {
+                    case 'status':
+                      thoughtsEl.textContent = data.content;
+                      break;
+                    case 'thought':
+                      thoughtsEl.textContent = data.content;
+                      break;
+                    case 'action':
+                      actionsEl.textContent = data.content;
+                      break;
+                    case 'answer':
+                      answerEl.textContent += data.content;
+                      break;
+                    case 'error':
+                      answerEl.textContent = data.content;
+                      answerEl.style.color = '#dc3545';
+                      break;
+                    case 'complete':
+                      // Streaming complete - remove the streaming ID since we're done
+                      messageDiv.removeAttribute('id');
+                      break;
+                  }
+
+                  // Scroll to bottom as content updates
+                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                } catch (e) {
+                  console.error('Error parsing JSON:', e, dataStr);
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
         }
 
-        // Update memory display after each message
+        // Update memory display after streaming completes
         updateMemoryDisplay();
 
         // Clear file after successful send
@@ -693,6 +861,14 @@
         appendMessage("❌ Sorry, I encountered an error. Please try again.", "assistant");
       }
     }
+    function readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
 
     function readFileAsText(file) {
       return new Promise((resolve, reject) => {
@@ -703,7 +879,7 @@
       });
     }
 
-    async function  getCourses(){
+    async function getCourses() {
       var response = await fetch(`${BASE_URL}/courses`, {
         method: "GET",
         headers: {
@@ -715,16 +891,7 @@
       return response.json().then(data => data.courses);
     }
 
-    async function  getCourseContents(){
-      var response = await fetch(`${BASE_URL}/course-contents`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        }
-      });
 
-      return response.json().then(data => data.contents);
-    }
   </script>
 
 </body>
