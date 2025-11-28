@@ -149,20 +149,43 @@ class AcademicAIAgent:
             return response
         
         try:
-            result = self.call_tool(
-                intent_analysis["intent"], 
-                intent_analysis["parameters"]
-            )
+            # Check if this is a confirmed Moodle action
+            is_confirmed = context and context.get("confirmed", False)
+            generated_content = context and context.get("generated_content")
+            
+            # Prepare parameters including confirmation flag
+            tool_params = {**intent_analysis["parameters"]}
+            
+            if is_confirmed:
+                # For confirmed actions, add the confirmation flag and pre-generated content
+                tool_params["confirmed"] = True
+                if generated_content:
+                    tool_params["generated_content"] = generated_content
+            
+            # Call the tool
+            result = self.call_tool(intent_analysis["intent"], tool_params)
+            
+            # Extract generated content from the result
+            generated_content = result.get("generated_content", "")
+            print("Generated content:", generated_content)
             
             success_message = f"✅ Successfully executed {intent_analysis['intent']}"
             self.memory.add(user_prompt, success_message)
             
-            return {
+            response = {
                 "status": "success",
                 "intent": intent_analysis["intent"],
-                "result": result,
+                "message": result["message"] if "message" in result else result,
                 "confidence": intent_analysis["confidence"]
             }
+            
+            # Add generated content for confirmation flow (only for Moodle actions on first call)
+            moodle_actions = ["generate_quiz", "post_announcement"]
+            if not is_confirmed and intent_analysis["intent"] in moodle_actions:
+                response["generated_content"] = generated_content
+            
+            return response
+            
         except Exception as e:
             error_message = f"❌ Error: {str(e)}"
             self.memory.add(user_prompt, error_message)
@@ -172,7 +195,7 @@ class AcademicAIAgent:
                 "error": str(e),
                 "intent": intent_analysis["intent"]
             }
-
+    
     def call_tool(self, tool_name: str, params: dict):
         """Call a tool through MCP"""
         return self.mcp_client.call_tool(tool_name, params)

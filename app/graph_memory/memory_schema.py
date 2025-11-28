@@ -216,11 +216,10 @@ class GraphMemory:
                     # fallback: wrap into JSON if not valid
                     parsed = {"answer": raw, "sources": [h.get("doc_title") for h in hits]}
 
-                # Always return clean final structure
                 return {
-                    "answer": parsed.get("answer"),
-                    "sources": parsed.get("sources") or [h["doc_title"] for h in hits],
+                    "message": f"{parsed.get('answer')} {parsed.get('sources') or [h['doc_title'] for h in hits]}"
                 }
+
 
             except Exception as e:
                 return {

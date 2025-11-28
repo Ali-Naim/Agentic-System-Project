@@ -314,6 +314,30 @@
       }
     }
 
+    .content-preview {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+
+    .quiz-preview {
+      background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+      border-color: #ffc107;
+    }
+
+    .announcement-preview {
+      background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+      border-color: #17a2b8;
+    }
+
     /* Different styles for agent message types */
     .agent-thought {
       font-style: italic;
@@ -330,6 +354,7 @@
 
     .agent-answer {
       margin-bottom: 5px;
+      white-space: pre-wrap;
     }
 
     /* Responsive adjustments */
@@ -353,13 +378,32 @@
         flex: 1;
       }
     }
+
+    .confirmation-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    #proceed-btn {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+    }
+
+    #refine-btn {
+      background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%) !important;
+    }
+
+    .confirmation-dialog {
+      border-left: 4px solid #800000;
+      background: #f8f9fa !important;
+    }
   </style>
 </head>
 
 <body>
 
   <header>
-     AUB Smart Academic Assistant
+    AUB Smart Academic Assistant
     <div class="header-subtitle">AI-powered teaching and learning support</div>
   </header>
 
@@ -406,10 +450,13 @@
   </div>
 
   <div class="quick-actions">
-    <div class="quick-btn" data-prompt="Generate a quiz about the current topic">Generate Quiz</div>
-    <div class="quick-btn" data-prompt="Post an announcement about upcoming deadlines">Post Announcement</div>
-    <div class="quick-btn" data-prompt="Grade my assignment based on the rubric">Grade Assignment</div>
-    <div class="quick-btn" data-prompt="Create a study plan for the exam">Study Plan</div>
+    <div class="quick-btn"
+      data-prompt="Generate a quiz about supervised learning, focus on Knn Algorithm. Make the quiz 3 questions, make them hard.">
+      Generate Quiz</div>
+    <div class="quick-btn" data-prompt="Post an urgent annoucement tell the students to prepare well for the final">Post
+      Announcement</div>
+    <div class="quick-btn" data-prompt="what is AI Agent?">QA 1</div>
+    <div class="quick-btn" data-prompt="what are agent personas?">QA 2</div>
   </div>
 
   <div id="chat-container">
@@ -455,6 +502,7 @@
     const memoryIndicator = document.getElementById("memory-indicator");
     const memoryCount = document.getElementById("memory-count");
     const clearMemoryBtn = document.getElementById("clear-memory-btn");
+    let pendingAction = null;
     // const uploadCourseMaterial = document.getElementById("upload-mats-btn");
 
     // Configuration
@@ -723,145 +771,177 @@
       }
     }
 
-    async function sendMessage() {
-      const message = userInput.value.trim();
-      const courseId = courseSelect.value;
-      const action = actionType.value;
-      const forumid = courseContentSelect.value;
+async function sendMessage() {
+  const message = userInput.value.trim();
+  const courseId = courseSelect.value;
+  const action = actionType.value;
+  const forumid = courseContentSelect.value;
 
-      if (!message && !uploadedFile) return;
+  if (!message && !uploadedFile) return;
 
-      // Add user message to chat
-      if (message) {
-        appendMessage(message, "user");
-      }
+  // Add user message to chat
+  if (message) {
+    appendMessage(message, "user");
+  }
 
-      userInput.value = "";
+  userInput.value = "";
 
-      // Show typing indicator
-      showTypingIndicator();
+  // Show typing indicator
+  showTypingIndicator();
 
-      try {
-        // Prepare request data
-        const requestData = {
-          message: message,
-          course_id: courseId ? parseInt(courseId) : null,
-          action_type: action,
-          forum_id: forumid ? parseInt(forumid) : null
-        };
+  try {
+    // Prepare request data
+    const requestData = {
+      message: message,
+      course_id: courseId ? parseInt(courseId) : null,
+      action_type: action,
+      forum_id: forumid ? parseInt(forumid) : null
+    };
 
-        if (uploadedFile) {
-          const base64 = await readFileAsBase64(uploadedFile);
-          requestData.file = base64;
-          requestData.filename = uploadedFile.name;
-        }
+    if (uploadedFile) {
+      const base64 = await readFileAsBase64(uploadedFile);
+      requestData.file = base64;
+      requestData.filename = uploadedFile.name;
+    }
 
-        console.log("Sending request with data:", requestData);
+    console.log("Sending request with data:", requestData);
 
-        // Use streaming endpoint
-        const response = await fetch(`${BASE_URL}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestData)
-        });
+    // Use streaming endpoint
+    const response = await fetch(`${BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestData)
+    });
 
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+    if (!response.ok) throw new Error(`Server responded with ${response.status}`);
 
-        // Remove typing indicator - we'll show streaming content instead
-        removeTypingIndicator();
+    // Remove typing indicator
+    removeTypingIndicator();
 
-        // Create a container for the streaming assistant message
-        const messageDiv = document.createElement("div");
-        messageDiv.classList.add("message", "assistant");
+    // We'll create the message container dynamically based on content type
+    let messageDiv = null;
+    let messageId = null;
+    let thoughtsEl = null;
+    let actionsEl = null;
+    let answerEl = null;
 
-        // Generate unique IDs for this message
-        const messageId = 'msg-' + Date.now();
-        messageDiv.id = messageId;
+    // Read the stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let hasConfirmation = false;
 
-        chatContainer.appendChild(messageDiv);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
 
-        // Create content area with different sections using unique IDs
-        messageDiv.innerHTML = `
-      <div id="${messageId}-thoughts" class="agent-thought"></div>
-      <div id="${messageId}-actions" class="agent-action"></div>
-      <div id="${messageId}-answer" class="agent-answer"></div>
-      <div class="message-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-    `;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
 
-        const thoughtsEl = document.getElementById(`${messageId}-thoughts`);
-        const actionsEl = document.getElementById(`${messageId}-actions`);
-        const answerEl = document.getElementById(`${messageId}-answer`);
+        // Keep the last incomplete line in buffer
+        buffer = lines.pop() || '';
 
-        // Read the stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6);
+            try {
+              const data = JSON.parse(dataStr);
 
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
+              // Handle confirmation required - create special confirmation container
+              if (data.type === 'confirmation_required') {
+                hasConfirmation = true;
+                
+                // If we already created a regular message div, remove it
+                if (messageDiv && messageDiv.parentNode) {
+                  messageDiv.remove();
+                }
+                
+                // Show confirmation dialog with the generated content
+                showConfirmationDialog(
+                  data.intent,
+                  data.parameters,
+                  data.generated_content, // Use the generated content from the backend
+                  data.original_request
+                );
+                return; // Exit the function early
+              }
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n\n');
+              // For non-confirmation content, create message container if not exists
+              if (!messageDiv && !hasConfirmation) {
+                messageDiv = document.createElement("div");
+                messageDiv.classList.add("message", "assistant");
+                messageId = 'msg-' + Date.now();
+                messageDiv.id = messageId;
 
-            // Keep the last incomplete line in buffer
-            buffer = lines.pop() || '';
+                messageDiv.innerHTML = `
+                  <div id="${messageId}-thoughts" class="agent-thought"></div>
+                  <div id="${messageId}-actions" class="agent-action"></div>
+                  <div id="${messageId}-answer" class="agent-answer"></div>
+                  <div class="message-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                `;
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6); // Remove 'data: ' prefix
-                try {
-                  const data = JSON.parse(dataStr);
+                chatContainer.appendChild(messageDiv);
+                thoughtsEl = document.getElementById(`${messageId}-thoughts`);
+                actionsEl = document.getElementById(`${messageId}-actions`);
+                answerEl = document.getElementById(`${messageId}-answer`);
+              }
 
-                  switch (data.type) {
-                    case 'status':
-                      thoughtsEl.textContent = data.content;
-                      break;
-                    case 'thought':
-                      thoughtsEl.textContent = data.content;
-                      break;
-                    case 'action':
-                      actionsEl.textContent = data.content;
-                      break;
-                    case 'answer':
-                      answerEl.textContent += data.content;
-                      break;
-                    case 'error':
+              // Handle normal streaming types only if we have a message container
+              if (messageDiv) {
+                switch (data.type) {
+                  case 'status':
+                    if (thoughtsEl) thoughtsEl.textContent = data.content;
+                    break;
+                  case 'thought':
+                    if (thoughtsEl) thoughtsEl.textContent = data.content;
+                    break;
+                  case 'action':
+                    if (actionsEl) actionsEl.textContent = data.content;
+                    break;
+                  case 'answer':
+                    if (answerEl) answerEl.textContent += data.content;
+                    break;
+                  case 'error':
+                    if (answerEl) {
                       answerEl.textContent = data.content;
                       answerEl.style.color = '#dc3545';
-                      break;
-                    case 'complete':
-                      // Streaming complete - remove the streaming ID since we're done
-                      messageDiv.removeAttribute('id');
-                      break;
-                  }
-
-                  // Scroll to bottom as content updates
-                  chatContainer.scrollTop = chatContainer.scrollHeight;
-                } catch (e) {
-                  console.error('Error parsing JSON:', e, dataStr);
+                    }
+                    break;
+                  case 'complete':
+                    messageDiv.removeAttribute('id');
+                    break;
                 }
+
+                chatContainer.scrollTop = chatContainer.scrollHeight;
               }
+
+            } catch (e) {
+              console.error('Error parsing JSON:', e, dataStr);
             }
           }
-        } finally {
-          reader.releaseLock();
         }
-
-        // Update memory display after streaming completes
-        updateMemoryDisplay();
-
-        // Clear file after successful send
-        clearFile();
-
-      } catch (error) {
-        console.error("Error sending message:", error);
-        removeTypingIndicator();
-        appendMessage("❌ Sorry, I encountered an error. Please try again.", "assistant");
       }
+    } finally {
+      reader.releaseLock();
     }
-    function readFileAsBase64(file) {
+
+    // Update memory display after streaming completes (only for non-confirmation flows)
+    if (!hasConfirmation) {
+      updateMemoryDisplay();
+    }
+
+    // Clear file after successful send
+    clearFile();
+
+  } catch (error) {
+    console.error("Error sending message:", error);
+    removeTypingIndicator();
+    appendMessage("❌ Sorry, I encountered an error. Please try again.", "assistant");
+  }
+}
+
+function readFileAsBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(",")[1]);
@@ -890,6 +970,197 @@
       console.log("Courses response:", response);
       return response.json().then(data => data.courses);
     }
+
+    function showConfirmationDialog(intent, parameters, generatedContent, originalRequest) {
+      const confirmationDiv = document.createElement("div");
+      confirmationDiv.classList.add("message", "assistant", "confirmation-dialog");
+      confirmationDiv.id = "confirmation-dialog";
+
+      // Format the generated content nicely
+      let contentPreview = "";
+      if (generatedContent && generatedContent !== "No content generated") {
+        contentPreview = `
+            <div style="margin: 15px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #800000;">
+                <strong>📝 Generated Content Preview:</strong>
+                <div style="margin-top: 10px; white-space: pre-wrap; font-family: monospace; font-size: 14px;">
+                    ${generatedContent}
+                </div>
+            </div>
+        `;
+      }
+
+      let paramsText = "";
+      if (parameters && Object.keys(parameters).length > 0) {
+        paramsText = `<div style="margin: 10px 0; padding: 10px; background: #e9ecef; border-radius: 6px; font-size: 13px;">
+            <strong>Action Parameters:</strong><br>
+            ${Object.entries(parameters).map(([key, value]) =>
+          `<span style="color: #800000;">${key}</span>: ${value}`
+        ).join('<br>')}
+        </div>`;
+      }
+
+      confirmationDiv.innerHTML = `
+        <div>
+            <strong>🔔 Action Required</strong><br>
+            I've generated the ${intent.replace('_', ' ')}. Please review the content above and confirm to post it to Moodle.
+            ${paramsText}
+        </div>
+        ${contentPreview}
+        <div class="confirmation-buttons" style="margin-top: 15px; display: flex; gap: 10px;">
+            <button id="proceed-btn" class="btn" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                ✅ Post to Moodle
+            </button>
+            <button id="refine-btn" class="btn btn-secondary">
+                ✏️ Refine Content
+            </button>
+        </div>
+        <div class="message-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+    `;
+
+      chatContainer.appendChild(confirmationDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+      // Store the pending action with generated content
+      pendingAction = {
+        intent,
+        parameters,
+        generatedContent,
+        originalRequest
+      };
+
+      // Add event listeners
+      document.getElementById("proceed-btn").addEventListener("click", handleProceed);
+      document.getElementById("refine-btn").addEventListener("click", handleRefine);
+    }
+    async function handleProceed() {
+      if (!pendingAction) return;
+
+      const confirmationDiv = document.getElementById("confirmation-dialog");
+      if (confirmationDiv) {
+        const buttonsDiv = confirmationDiv.querySelector(".confirmation-buttons");
+        buttonsDiv.innerHTML = '<div style="color: #28a745;">⏳ Posting to Moodle...</div>';
+      }
+
+      try {
+        const response = await fetch(`${BASE_URL}/execute-confirmed-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: "Execute confirmed action",
+            confirmed: true,
+            original_request: {
+              ...pendingAction.originalRequest,
+              intent: pendingAction.intent,
+              generated_content: pendingAction.generatedContent
+            }
+          })
+        });
+
+        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+
+        // Process the execution response
+        await processConfirmationResponse(response);
+
+      } catch (error) {
+        console.error("Error executing confirmed action:", error);
+        appendMessage("❌ Error posting to Moodle", "assistant");
+      } finally {
+        pendingAction = null;
+      }
+    }
+    // Handle refine action
+    function handleRefine() {
+      if (!pendingAction) return;
+
+      const confirmationDiv = document.getElementById("confirmation-dialog");
+      if (confirmationDiv) {
+        confirmationDiv.querySelector(".confirmation-buttons").innerHTML =
+          '<div style="color: #6c757d;">✏️ Please refine your request above...</div>';
+      }
+
+      // Pre-fill the input with the original message for editing
+      userInput.value = pendingAction.originalRequest.message;
+      userInput.focus();
+
+      pendingAction = null;
+    }
+
+    // Process confirmation response stream
+    async function processConfirmationResponse(response) {
+      const messageDiv = document.createElement("div");
+      messageDiv.classList.add("message", "assistant");
+      const messageId = 'msg-' + Date.now();
+      messageDiv.id = messageId;
+
+      messageDiv.innerHTML = `
+        <div id="${messageId}-thoughts" class="agent-thought"></div>
+        <div id="${messageId}-actions" class="agent-action"></div>
+        <div id="${messageId}-answer" class="agent-answer"></div>
+        <div class="message-time">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+    `;
+
+      chatContainer.appendChild(messageDiv);
+
+      const thoughtsEl = document.getElementById(`${messageId}-thoughts`);
+      const actionsEl = document.getElementById(`${messageId}-actions`);
+      const answerEl = document.getElementById(`${messageId}-answer`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6);
+              try {
+                const data = JSON.parse(dataStr);
+
+                switch (data.type) {
+                  case 'status':
+                    thoughtsEl.textContent = data.content;
+                    break;
+                  case 'thought':
+                    thoughtsEl.textContent = data.content;
+                    break;
+                  case 'action':
+                    actionsEl.textContent = data.content;
+                    break;
+                  case 'answer':
+                    answerEl.textContent += data.content;
+                    break;
+                  case 'error':
+                    answerEl.textContent = data.content;
+                    answerEl.style.color = '#dc3545';
+                    break;
+                  case 'complete':
+                    messageDiv.removeAttribute('id');
+                    break;
+                }
+
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+              } catch (e) {
+                console.error('Error parsing JSON:', e, dataStr);
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      updateMemoryDisplay();
+    }
+
+
 
 
   </script>

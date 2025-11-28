@@ -72,3 +72,8 @@ class ToolRequest(BaseModel):
 
 class GraphQARequest(BaseModel):
     question: str = Field(..., description="The user question to answer from graph.")
+
+class ConfirmationRequest(BaseModel):
+    message: str
+    confirmed: bool
+    original_request: dict

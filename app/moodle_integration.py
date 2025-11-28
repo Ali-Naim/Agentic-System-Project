@@ -439,9 +439,8 @@ class MoodleIntegration:
     def create_and_upload_quiz_pdf(self, quiz_json: dict, forum_id: int = 6):
        result = self.create_google_forms_quiz_via_apps_script(quiz_json, forum_id)
        if result.get('success'):
-            return result
+            return {"message": f"Google Forms quiz created and posted to Moodle successfully! { result.get('form_url')}"}
        return {
-            "success": False,
             "message": "Failed to post to forum and create resource"
         }
 

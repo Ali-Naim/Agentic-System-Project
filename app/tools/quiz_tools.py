@@ -36,6 +36,7 @@ class QuizTools:
         }}
 
         AND NOTHING ELSE.
+        Always starts with questions key.
         """
 
         response = self.client.chat.completions.create(

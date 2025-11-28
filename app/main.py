@@ -8,7 +8,7 @@ from typing import AsyncGenerator, Dict, Optional, Union
 from ai_agent import AcademicAIAgent 
 from mcp_server import router as mcp_router
 import json
-from models import UserRequest
+from models import UserRequest,ConfirmationRequest
 import base64
 from utils import extract_pdf_text
 
@@ -57,7 +57,7 @@ async def chat(request: UserRequest):
                     title=request.filename or "Uploaded Document",
                     metadata={"course_id":request.course_id,"chapter": request.filename}
                 )
-                return {"status": "success", "reply": "Document uploaded to graph memory successfully."}
+                return StreamingResponse("Document uploaded and processed successfully.", media_type="text/event-stream")
             except Exception as e:
                 print(f"❌ Error uploading document to graph memory: {str(e)}")
                 raise HTTPException(status_code=500, detail="Failed to upload document to graph memory.")
@@ -148,7 +148,38 @@ async def upload_document(course_id: int ):
         return {"status": "success", "message": "Documents Uploaded Successfuly", "result":result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
 
+@app.post("/confirm-action")
+async def confirm_action(request: ConfirmationRequest):
+    """Handle user confirmation for actions"""
+    try:
+        if request.confirmed:
+            # If confirmed, execute the original request
+            return StreamingResponse(
+                stream_agent_response(
+                    user_prompt=request.original_request.get("message", ""),
+                    context={
+                        "course_id": request.original_request.get("course_id"),
+                        "forum_id": request.original_request.get("forum_id"),
+                        "confirmed": True  # Add flag to indicate confirmation
+                    }
+                ),
+                media_type="text/event-stream"
+            )
+        else:
+            # If not confirmed, return a refinement message
+            return JSONResponse(
+                content={
+                    "status": "refinement_required",
+                    "message": "Please refine your request. What would you like to change?"
+                }
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
 async def stream_agent_response(user_prompt: str, context: dict) -> AsyncGenerator[str, None]:
     """Stream agent response with thoughts, actions, and final answer"""
     try:
@@ -156,25 +187,59 @@ async def stream_agent_response(user_prompt: str, context: dict) -> AsyncGenerat
         yield "data: " + json.dumps({"type": "status", "content": "🤔 Processing your request..."}) + "\n\n"
         await asyncio.sleep(0.1)
         
-        # Get the agent's response (you'll need to modify your agent to support streaming)
+        # Get the agent's response
         result = ai_agent.handle_user_request(
             user_prompt=user_prompt,
             context=context
         )
         
-        # Stream the agent's thought process if available
+        # Check if this is a Moodle action that requires confirmation
+        moodle_actions = ["generate_quiz", "post_announcement"]
+        
+        if (result.get("status") == "success" and 
+            result.get("intent") in moodle_actions and
+            not context.get("confirmed")):
+            
+            # First, stream the generated content to show the user
+            generated_content = result.get("generated_content", "")
+            
+            if generated_content:
+                # Format the content nicely for display
+                if result["intent"] == "generate_quiz":
+                    content_display = format_quiz_for_display(generated_content)
+                else:  # announcement
+                    content_display = generated_content
+                
+                # Stream the generated content
+                yield "data: " + json.dumps({"type": "answer", "content": content_display}) + "\n\n"
+                await asyncio.sleep(0.1)
+            
+            # Then ask for confirmation
+            yield "data: " + json.dumps({
+                "type": "confirmation_required",
+                "content": f"✅ I've generated the {result['intent'].replace('_', ' ')}. Would you like to proceed and post it to Moodle?",
+                "intent": result["intent"],
+                "generated_content": generated_content,
+                "original_request": {
+                    "message": user_prompt,
+                    "course_id": context.get("course_id"),
+                    "forum_id": context.get("forum_id")
+                }
+            }) + "\n\n"
+            return
+        
+        # For non-Moodle actions or confirmed actions, proceed normally
         if "thought_process" in result:
             yield "data: " + json.dumps({"type": "thought", "content": result["thought_process"]}) + "\n\n"
             await asyncio.sleep(0.1)
         
-        # Stream the intent
         if "intent" in result:
             yield "data: " + json.dumps({"type": "action", "content": f"Executing: {result['intent']}"}) + "\n\n"
             await asyncio.sleep(0.1)
         
-        # Stream the result in chunks to simulate token-by-token streaming
+        # Stream the final result
         if result.get("status") == "success":
-            final_response = f"✅ I've executed: {result['intent']}\n\nResult: {result['result']}"
+            final_response = result["message"]
         elif result.get("status") == "incomplete":
             final_response = result["message"]
         elif result.get("status") == "error":
@@ -182,12 +247,12 @@ async def stream_agent_response(user_prompt: str, context: dict) -> AsyncGenerat
         else:
             final_response = "❓ Unknown response status"
         
-        # Stream the final response token by token (simulated)
+        # Stream the final response
         words = final_response.split()
         for i, word in enumerate(words):
             chunk = word + (" " if i < len(words) - 1 else "")
             yield "data: " + json.dumps({"type": "answer", "content": chunk}) + "\n\n"
-            await asyncio.sleep(0.05)  # Adjust speed as needed
+            await asyncio.sleep(0.05)
         
         # Stream completion signal
         yield "data: " + json.dumps({"type": "complete", "content": ""}) + "\n\n"
@@ -196,7 +261,104 @@ async def stream_agent_response(user_prompt: str, context: dict) -> AsyncGenerat
         error_msg = f"❌ Error: {str(e)}"
         yield "data: " + json.dumps({"type": "error", "content": error_msg}) + "\n\n"
 
+def format_quiz_for_display(quiz_data):
+    """Format quiz data for nice display"""
+    if isinstance(quiz_data, str):
+        return quiz_data
+    
+    if isinstance(quiz_data, dict):
+        # Handle different quiz formats
+        if 'raw_output' in quiz_data:
+            questions = quiz_data['raw_output']
+        elif 'questions' in quiz_data:
+            questions = quiz_data['questions']
+        else:
+            questions = []
+        
+        formatted = "📝 **Generated Quiz**\n\n"
+        for i, question in enumerate(questions, 1):
+            formatted += f"**Q{i}: {question.get('question', 'No question text')}**\n"
+            
+            # Add options if available
+            options = question.get('options', [])
+            for j, option in enumerate(options):
+                formatted += f"   {chr(65+j)}. {option}\n"
+            
+            # Add answer if available
+            if 'answer' in question:
+                formatted += f"   **Answer: {question['answer']}**\n"
+            
+            formatted += "\n"
+        
+        return formatted
+    
+    return str(quiz_data)
 
+# Add this new endpoint for confirmed actions
+@app.post("/execute-confirmed-action")
+async def execute_confirmed_action(request: ConfirmationRequest):
+    """Execute the action after user confirmation"""
+    try:
+        # Add confirmed flag to context
+        context = {
+            "course_id": request.original_request.get("course_id"),
+            "forum_id": request.original_request.get("forum_id"),
+            "confirmed": True,
+            "generated_content": request.original_request.get("generated_content")
+        }
+        
+        # Execute the confirmed action
+        return StreamingResponse(
+            stream_confirmed_action(
+                user_prompt=request.original_request.get("message", ""),
+                context=context,
+                intent=request.original_request.get("intent")
+            ),
+            media_type="text/event-stream"
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+async def stream_confirmed_action(user_prompt: str, context: dict, intent: str) -> AsyncGenerator[str, None]:
+    """Stream the execution of a confirmed action"""
+    try:
+        yield "data: " + json.dumps({"type": "status", "content": "🚀 Executing confirmed action..."}) + "\n\n"
+        await asyncio.sleep(0.1)
+        
+        # Execute the action with confirmation
+        result = ai_agent.handle_user_request(
+            user_prompt=user_prompt,
+            context=context
+        )
+        
+        # Stream the execution process
+        if "thought_process" in result:
+            yield "data: " + json.dumps({"type": "thought", "content": result["thought_process"]}) + "\n\n"
+            await asyncio.sleep(0.1)
+        
+        yield "data: " + json.dumps({"type": "action", "content": f"Posting to Moodle: {intent.replace('_', ' ')}"}) + "\n\n"
+        await asyncio.sleep(0.1)
+        
+        # Stream the result
+        if result.get("status") == "success":
+            final_response = result["message"]
+        else:
+            final_response = f"❌ Action failed: {result.get('error', 'Unknown error')}"
+        
+        words = final_response.split()
+        for i, word in enumerate(words):
+            chunk = word + (" " if i < len(words) - 1 else "")
+            yield "data: " + json.dumps({"type": "answer", "content": chunk}) + "\n\n"
+            await asyncio.sleep(0.05)
+        
+        yield "data: " + json.dumps({"type": "complete", "content": ""}) + "\n\n"
+        
+    except Exception as e:
+        error_msg = f"❌ Error executing action: {str(e)}"
+        yield "data: " + json.dumps({"type": "error", "content": error_msg}) + "\n\n"
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

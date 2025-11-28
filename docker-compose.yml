@@ -1,0 +1,16 @@
+services:
+  main_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.main
+    ports:
+      - "8000:8000"
+    restart: always
+
+  mcp_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    ports:
+      - "8001:8001"
+    restart: always
