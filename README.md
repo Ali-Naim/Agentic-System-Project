@@ -1,4 +1,4 @@
-# 📘 RAZ TA Agent
+# 📘 RAZ Assistant
 
 RAZ TA Agent is an intelligent teaching assistant designed to help **professors** and **students** enhance their learning experience.  
 It can store course materials in **graph memory (Neo4j)**, answer questions grounded in the uploaded content, generate quizzes, and directly integrate with **Moodle Cloud** to automate teaching workflows.
