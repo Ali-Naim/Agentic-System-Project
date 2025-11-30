@@ -57,8 +57,21 @@ Install **Docker Desktop**:
 
 ---
 
-## 📥 Clone the Repository
+##  Clone the Repository
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
 cd YOUR_REPO
+```
+---
+## Run the containers:
+
+```bash
+docker compose up
+```
+
+This will start all the services defined in your docker-compose.yml.
+
+## Access the application:
+
+Open your browser and go to the relevant URL (e.g., http://localhost:8000 for FastAPI).
