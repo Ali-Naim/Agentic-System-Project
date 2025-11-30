@@ -75,3 +75,11 @@ This will start all the services defined in your docker-compose.yml.
 ## Access the application:
 
 Open your browser and go to the relevant URL (e.g., http://localhost:8000 for FastAPI).
+
+# More soomth run:
+
+## Pull prebuilt Docker images
+```bash
+docker pull 661999/raz-main_server:latest
+docker pull 661999/raz-mcp_server:latest
+
