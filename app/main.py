@@ -33,34 +33,11 @@ async def chat(request: UserRequest):
     """Main chat endpoint - uses AI agent for intent analysis and execution"""
     try:
         if request.file:
-            file_text = None
-
-            # 1. Try to decode base64 (PDFs come base64 from the browser)
-            try:
-                decoded_bytes = base64.b64decode(request.file)
-                
-                # Heuristic: PDF files start with "%PDF"
-                if decoded_bytes[:4] == b"%PDF":
-                    file_text = extract_pdf_text(decoded_bytes)
-                else:
-                    # Not PDF → Treat as plain text
-                    file_text = decoded_bytes.decode("utf-8", errors="ignore")
-            except Exception:
-                # fallback → assume text
-                file_text = request.file
-
-            try:
-            
-            # 2. Push file into Neo4j Graph Memory
-                ai_agent.graph_memory.addGraphFile(
-                    doc_text=file_text,
-                    title=request.filename or "Uploaded Document",
-                    metadata={"course_id":request.course_id,"chapter": request.filename}
-                )
-                return StreamingResponse("Document uploaded and processed successfully.", media_type="text/event-stream")
-            except Exception as e:
-                print(f"❌ Error uploading document to graph memory: {str(e)}")
-                raise HTTPException(status_code=500, detail="Failed to upload document to graph memory.")
+           return StreamingResponse(
+                feed_graph(file=request.file, 
+                          filename=request.filename, 
+                          course_id=request.course_id), 
+                media_type="text/event-stream")
 
         else:
             return StreamingResponse(
@@ -359,6 +336,50 @@ async def stream_confirmed_action(user_prompt: str, context: dict, intent: str) 
     except Exception as e:
         error_msg = f"❌ Error executing action: {str(e)}"
         yield "data: " + json.dumps({"type": "error", "content": error_msg}) + "\n\n"
+
+
+
+async def feed_graph(file: str, filename: str = None, course_id: int = None ):
+    file_text = None
+    try:
+        decoded_bytes = base64.b64decode(file)
+        
+        # Heuristic: PDF files start with "%PDF"
+        if decoded_bytes[:4] == b"%PDF":
+            file_text = extract_pdf_text(decoded_bytes)
+        else:
+            # Not PDF → Treat as plain text
+            file_text = decoded_bytes.decode("utf-8", errors="ignore")
+    except Exception:
+        # fallback → assume text
+        file_text = file
+
+    try:
+    
+    # 2. Push file into Neo4j Graph Memory
+        ai_agent.graph_memory.addGraphFile(
+            doc_text=file_text,
+            title=filename or "Uploaded Document",
+            metadata={"course_id": course_id,"chapter": filename}
+        )
+
+        response = "Document uploaded and processed successfully."
+                # Stream the final response
+        words = response.split()
+
+        for i, word in enumerate(words):
+            chunk = word + (" " if i < len(words) - 1 else "")
+            yield "data: " + json.dumps({"type": "answer", "content": chunk}) + "\n\n"
+            await asyncio.sleep(0.05)
+        
+        # Stream completion signal
+        yield "data: " + json.dumps({"type": "complete", "content": ""}) + "\n\n"
+
+    except Exception as e:
+        print(f"❌ Error uploading document to graph memory: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload document to graph memory.")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

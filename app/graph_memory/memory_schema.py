@@ -1,4 +1,3 @@
-from sentence_transformers import SentenceTransformer
 from .neo4j_connector import Neo4jConnector
 from config import Config
 import numpy as np
@@ -6,6 +5,7 @@ import json
 import os
 from typing import List, Optional, Tuple, Dict, Any
 import openai
+from openai import OpenAI
 import uuid
 
 
@@ -18,7 +18,8 @@ class GraphMemory:
     def __init__(self, connector: Neo4jConnector, cfg: Config):
         self.conn = connector
         self.cfg = cfg
-        self.embedder = SentenceTransformer(cfg.embedding_model_name)
+        self.client = OpenAI(api_key=cfg.openai_api_key)
+        self.embedding_model = cfg.embedding_model_name
 
 
     # create minimal constraints / indexes
@@ -55,9 +56,13 @@ class GraphMemory:
         return chunks
     
     def _embed_texts(self, texts: List[str]) -> List[List[float]]:
-        arr = self.embedder.encode(texts, show_progress_bar=False)
-        # ensure python lists
-        return [list(map(float, x)) for x in np.array(arr)]
+        response = self.client.embeddings.create(
+            model=self.embedding_model,   # "text-embedding-3-large" or "text-embedding-3-small"
+            input=texts
+        )
+
+        # Extract embeddings
+        return [item.embedding for item in response.data]
     
     def add_document(self, doc_id: str, title: str, text: str, metadata: dict = None) -> None:
         """Add a document + chunks + embeddings to the graph.

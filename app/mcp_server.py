@@ -66,15 +66,10 @@ def call_tool(req: ToolRequest):
                 # If confirmed, post to Moodle
                 moodle_result = None
                 try:
-                    print(hasattr(ai_agent.moodle, "create_quiz_using_forum"))
-                    if hasattr(ai_agent.moodle, "create_quiz_using_forum"):
-                        print(quiz)
-                        safe_topic = re.sub(r'[^A-Za-z0-9_\-]', '_', qr.topic) 
-                        moodle_result = ai_agent.moodle.create_and_upload_quiz_pdf(
-                                quiz_json=quiz
-                        )
-                    elif hasattr(ai_agent.moodle, "create_quiz"):
-                        moodle_result = ai_agent.moodle.create_quiz(qr.course_id, quiz)
+                    moodle_result = ai_agent.moodle.create_and_upload_quiz_pdf(
+                            quiz_json=quiz
+                    )
+
                 except Exception as e:
                     moodle_result = {"error": str(e)}
 
@@ -86,7 +81,7 @@ def call_tool(req: ToolRequest):
                 # If not confirmed, just return the generated content
                 return {
                     "message": "Quiz generated successfully. Please confirm to post to Moodle.",
-                    "generated_content": quiz
+                    "generated_content": str(quiz)
                 }
 
         elif tool_name == "post_announcement":

@@ -20,13 +20,14 @@ from tools.graph_qa import GraphQATool
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 
 config = Config(
     neo4j_uri="bolt://127.0.0.1:7687",
     neo4j_user="neo4j",
     neo4j_password="MyPassword",
-    embedding_model_name="all-MiniLM-L6-v2",
+    openai_api_key=OPENAI_API_KEY,
+    embedding_model_name="text-embedding-3-small",
     chunk_size=500,
     chunk_overlap=50
 )

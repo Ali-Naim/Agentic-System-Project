@@ -11,4 +11,3 @@ reportlab
 PyPDF2
 numpy
 neo4j
-sentence_transformers
