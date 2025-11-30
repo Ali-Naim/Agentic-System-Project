@@ -76,7 +76,7 @@ This will start all the services defined in your docker-compose.yml.
 
 Open your browser and go to the relevant URL (e.g., http://localhost:8000 for FastAPI).
 
-# More soomth run:
+# More smooth run:
 
 ## Pull prebuilt Docker images
 ```bash
