@@ -81,5 +81,8 @@ Open your browser and go to the relevant URL (e.g., http://localhost:8000 for Fa
 ## Pull prebuilt Docker images
 ```bash
 docker pull 661999/raz-main_server:latest
+
+[![Watch the video](images/thumbnail.png)](https://drive.google.com/file/d/1uWjMYiZWdiLKvGVOwG6yeHyhICCbKU9j/view?usp=drive_link)
+
 docker pull 661999/raz-mcp_server:latest
 
