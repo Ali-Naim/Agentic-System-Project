@@ -60,14 +60,14 @@ Install **Docker Desktop**:
 ##  Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd YOUR_REPO
+git clone https://github.com/Ali-Naim/Agentic-System-Project.git
+cd Agentic-System-Project
 ```
 ---
 ## Run the containers:
 
 ```bash
-docker compose up
+docker-compose up
 ```
 
 This will start all the services defined in your docker-compose.yml.
@@ -80,8 +80,8 @@ Open your browser and go to the relevant URL (e.g., http://localhost:8000 for Fa
 
 ## Pull prebuilt Docker images
 ```bash
-docker pull 661999/raz-main_server:latest
-docker pull 661999/raz-mcp_server:latest
+docker pull alinaim09/agentic-main_server:latest
+docker pull alinaim09/agentic-mcp_server:latest
 ```
 
 # Demo Video
