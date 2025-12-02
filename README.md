@@ -1,6 +1,6 @@
-# 📘 RAZ TA Agent
+# 📘 RAZ Assistant
 
-RAZ TA Agent is an intelligent teaching assistant designed to help **professors** and **students** enhance their learning experience.  
+RAZ Assistant is an intelligent teaching assistant integrated with Moodle designed to help **professors** and **students** enhance their learning experience.  
 It can store course materials in **graph memory (Neo4j)**, answer questions grounded in the uploaded content, generate quizzes, and directly integrate with **Moodle Cloud** to automate teaching workflows.
 
 ---
@@ -57,8 +57,33 @@ Install **Docker Desktop**:
 
 ---
 
-## 📥 Clone the Repository
+##  Clone the Repository
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
 cd YOUR_REPO
+```
+---
+## Run the containers:
+
+```bash
+docker compose up
+```
+
+This will start all the services defined in your docker-compose.yml.
+
+## Access the application:
+
+Open your browser and go to the relevant URL (e.g., http://localhost:8000 for FastAPI).
+
+# More smooth run:
+
+## Pull prebuilt Docker images
+```bash
+docker pull 661999/raz-main_server:latest
+docker pull 661999/raz-mcp_server:latest
+```
+
+# Demo Video
+
+[![Watch the video](images/thumbnail.png)](https://drive.google.com/file/d/1uWjMYiZWdiLKvGVOwG6yeHyhICCbKU9j/view?usp=drive_link)
