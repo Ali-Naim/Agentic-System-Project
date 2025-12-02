@@ -80,8 +80,8 @@ Open your browser and go to the relevant URL (e.g., http://localhost:8000 for Fa
 
 ## Pull prebuilt Docker images
 ```bash
-docker pull alinaim09/agentic-main_server:latest
-docker pull alinaim09/agentic-mcp_server:latest
+docker pull alinaim09/raz-main_server:latest
+docker pull alinaim09/raz-mcp_server:latest
 ```
 
 # Demo Video
