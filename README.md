@@ -60,7 +60,7 @@ Install **Docker Desktop**:
 ##  Clone the Repository
 
 ```bash
-https://github.com/Ali-Naim/Agentic-System-Project.git
+git clone https://github.com/Ali-Naim/Agentic-System-Project.git
 cd Agentic-System-Project
 ```
 ---
