@@ -6,6 +6,11 @@ services:
     ports:
       - "8000:8000"
     restart: always
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
 
   mcp_server:
     build:
@@ -14,3 +19,8 @@ services:
     ports:
       - "8001:8001"
     restart: always
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
