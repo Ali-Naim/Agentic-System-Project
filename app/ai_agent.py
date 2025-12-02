@@ -20,7 +20,7 @@ from tools.graph_qa import GraphQATool
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 config = Config(
     neo4j_uri="bolt://127.0.0.1:7687",
