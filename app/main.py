@@ -1,7 +1,9 @@
 # app/main.py
 from fastapi import FastAPI, HTTPException, UploadFile, Form, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse
 import asyncio
 from pydantic import BaseModel
 from typing import AsyncGenerator, Dict, Optional, Union
@@ -11,7 +13,7 @@ import json
 from models import UserRequest,ConfirmationRequest
 import base64
 from utils import extract_pdf_text
-
+import os
 
 app = FastAPI(title="Smart Academic Assistant")
 
@@ -23,11 +25,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/frontend", StaticFiles(directory="../frontend"), name="frontend")
+
 ai_agent = AcademicAIAgent()
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the Smart Academic Assistant API"}
+    html_path = os.path.join(os.path.dirname(__file__), "../frontend/index.html")
+    return FileResponse(html_path)
+
 @app.post("/chat")
 async def chat(request: UserRequest):
     """Main chat endpoint - uses AI agent for intent analysis and execution"""
