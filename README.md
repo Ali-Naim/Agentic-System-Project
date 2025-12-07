@@ -86,4 +86,4 @@ docker pull alinaim09/raz-mcp_server:latest
 
 # Demo Video
 
-[![Watch the video](images/thumbnail.png)](https://drive.google.com/file/d/1uWjMYiZWdiLKvGVOwG6yeHyhICCbKU9j/view?usp=drive_link)
+[![Watch the video](images/thumbnail.png)](https://drive.google.com/file/d/1WjtFagLwizjCP9Wp69jHWzkRKlMyNyzz/view?usp=sharing)
